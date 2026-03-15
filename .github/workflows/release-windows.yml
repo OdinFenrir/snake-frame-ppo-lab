@@ -5,6 +5,7 @@ on:
 
 jobs:
   build-windows-exe:
+    if: ${{ false }}
     runs-on: windows-latest
     steps:
       - name: Checkout
