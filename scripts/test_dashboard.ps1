@@ -1,7 +1,20 @@
 param(
     [string]$Python = ".\.venv\Scripts\python.exe",
     [switch]$Quick,
-    [switch]$CopySummary
+    [switch]$CopySummary,
+    [switch]$SkipControllerGate,
+    [string]$ControllerGateBaselineFull = "",
+    [string]$ControllerGateCandidateFull = "artifacts\live_eval\suites\latest_suite.json",
+    [string]$ControllerGateBaselineWorst = "",
+    [string]$ControllerGateCandidateWorst = "",
+    [string]$ControllerGateBaselineTraceDir = "",
+    [string]$ControllerGateCandidateTraceDir = "",
+    [double]$ControllerGateMinFullDeltaGain = 0.0,
+    [double]$ControllerGateMinWorstDeltaGain = 0.0,
+    [double]$ControllerGateMaxInterventionRate = 8.0,
+    [double]$ControllerGateMaxInterventionRateIncrease = 1.5,
+    [int]$ControllerGateTopN = 10,
+    [bool]$ControllerGateRequireWorstImprovement = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,9 +49,25 @@ function Run-Step {
     Write-Host ("Command: " + $Command) -ForegroundColor DarkCyan
     Write-Host ("Log:     " + $LogFile) -ForegroundColor DarkGray
 
+    if (Test-Path $LogFile) { Remove-Item -Force $LogFile }
+    $errFile = "$LogFile.stderr"
+    if (Test-Path $errFile) { Remove-Item -Force $errFile }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    & cmd /c $Command 2>&1 | Tee-Object -FilePath $LogFile | Out-Host
-    $exitCode = $LASTEXITCODE
+    $proc = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c $Command" `
+        -NoNewWindow `
+        -Wait `
+        -PassThru `
+        -RedirectStandardOutput $LogFile `
+        -RedirectStandardError $errFile
+    $exitCode = $proc.ExitCode
+    if (Test-Path $errFile) {
+        Get-Content -Path $errFile | Add-Content -Path $LogFile
+        Remove-Item -Force $errFile
+    }
+    if (Test-Path $LogFile) {
+        Get-Content -Path $LogFile | Out-Host
+    }
     $sw.Stop()
 
     $status = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
@@ -51,6 +80,35 @@ function Run-Step {
         LogFile = $LogFile
         Command = $Command
     }
+}
+
+function Find-PreviousSuitePath {
+    param(
+        [string]$Root,
+        [string]$CandidatePath
+    )
+    $suiteRoot = Join-Path $Root "artifacts\live_eval\suites"
+    if (-not (Test-Path $suiteRoot)) {
+        return ""
+    }
+    $candidateFull = ""
+    if ($CandidatePath) {
+        try {
+            $candidateFull = [System.IO.Path]::GetFullPath((Join-Path $Root $CandidatePath))
+        } catch {
+            $candidateFull = ""
+        }
+    }
+    $suiteFiles = Get-ChildItem -Path $suiteRoot -File -Filter "suite_*.json" | Sort-Object LastWriteTime -Descending
+    foreach ($f in $suiteFiles) {
+        if (-not $candidateFull) {
+            return $f.FullName
+        }
+        if ($f.FullName -ne $candidateFull) {
+            return $f.FullName
+        }
+    }
+    return ""
 }
 
 if (-not (Test-Path $Python)) {
@@ -98,6 +156,46 @@ $steps = @(
 if ($Quick) {
     $steps = $steps | Where-Object { $_.Name -in @("Lint (ruff)", "Tests (pytest -m not render)") }
     Write-Host "Quick mode enabled: running lint + core tests only." -ForegroundColor Yellow
+} elseif (-not $SkipControllerGate) {
+    $baselineFull = $ControllerGateBaselineFull
+    if (-not $baselineFull) {
+        $baselineFull = Find-PreviousSuitePath -Root $root -CandidatePath $ControllerGateCandidateFull
+    }
+
+    $gatePieces = @()
+    $gatePieces += "$Python scripts\controller_candidate_gate.py"
+    if ($baselineFull) {
+        $gatePieces += "--baseline-full `"$baselineFull`""
+    }
+    $gatePieces += "--candidate-full `"$ControllerGateCandidateFull`""
+    $gatePieces += "--top-n $ControllerGateTopN"
+    $gatePieces += "--min-full-delta-gain $ControllerGateMinFullDeltaGain"
+    $gatePieces += "--min-worst-delta-gain $ControllerGateMinWorstDeltaGain"
+    $gatePieces += "--max-intervention-rate $ControllerGateMaxInterventionRate"
+    $gatePieces += "--max-intervention-rate-increase $ControllerGateMaxInterventionRateIncrease"
+    if ($ControllerGateRequireWorstImprovement) {
+        $gatePieces += "--require-worst-improvement"
+    }
+    if ($ControllerGateBaselineWorst) {
+        $gatePieces += "--baseline-worst `"$ControllerGateBaselineWorst`""
+    }
+    if ($ControllerGateCandidateWorst) {
+        $gatePieces += "--candidate-worst `"$ControllerGateCandidateWorst`""
+    }
+    if ($ControllerGateBaselineTraceDir) {
+        $gatePieces += "--baseline-trace-dir `"$ControllerGateBaselineTraceDir`""
+    }
+    if ($ControllerGateCandidateTraceDir) {
+        $gatePieces += "--candidate-trace-dir `"$ControllerGateCandidateTraceDir`""
+    }
+    $gatePieces += "--out `"artifacts\live_eval\controller_candidate_gate.json`""
+    $gatePieces += "--enforce"
+
+    $steps += @{
+        Name = "Controller Candidate Gate"
+        Command = ($gatePieces -join " ")
+        Log = "06_controller_candidate_gate.log"
+    }
 }
 
 $results = @()
@@ -107,7 +205,7 @@ foreach ($step in $steps) {
     $results += $result
 }
 
-$failCount = ($results | Where-Object { $_.Status -eq "FAIL" }).Count
+$failCount = @($results | Where-Object { $_.Status -eq "FAIL" }).Count
 $totalSeconds = ($results | Measure-Object -Property Seconds -Sum).Sum
 
 $summaryLines = @()
@@ -141,6 +239,22 @@ if (Test-Path $dashboardRoot) {
 Write-Section "Final Summary"
 foreach ($r in $results) {
     Write-Status -Label ("{0} ({1:N2}s)" -f $r.Name, $r.Seconds) -Status $r.Status
+}
+
+$controllerGate = $results | Where-Object { $_.Name -eq "Controller Candidate Gate" } | Select-Object -First 1
+if ($null -ne $controllerGate) {
+    if ($controllerGate.Status -eq "PASS") {
+        Write-Host "CONTROLLER CANDIDATE: PASS" -ForegroundColor Green
+    } else {
+        $gateReason = ""
+        if (Test-Path $controllerGate.LogFile) {
+            $gateReason = (Get-Content -Path $controllerGate.LogFile | Select-Object -Last 1)
+        }
+        if (-not $gateReason) {
+            $gateReason = "see log for failed checks"
+        }
+        Write-Host ("CONTROLLER CANDIDATE: REJECT - " + $gateReason) -ForegroundColor Red
+    }
 }
 Write-Host ""
 Write-Host ("Summary (markdown): " + $summaryPath) -ForegroundColor Cyan

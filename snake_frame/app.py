@@ -436,6 +436,29 @@ class SnakeFrameApp:
             "paired_median_delta_controller_minus_ppo": float(median),
         }
 
+    @staticmethod
+    def _extract_mean_interventions_pct(controller_summary: dict) -> float | None:
+        if not isinstance(controller_summary, dict):
+            return None
+        raw = controller_summary.get("mean_interventions_pct")
+        try:
+            if raw is not None:
+                return float(raw)
+        except Exception:
+            pass
+        rows = list(controller_summary.get("controller_telemetry_rows") or [])
+        vals: list[float] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                vals.append(float(row.get("interventions_pct", 0.0)))
+            except Exception:
+                continue
+        if not vals:
+            return None
+        return float(sum(vals) / float(len(vals)))
+
     def _persist_eval_suite_bundle(self) -> tuple[Path | None, str]:
         if self._eval_suite_ppo_summary is None or self._eval_suite_controller_summary is None:
             return None, "Suite incomplete"
@@ -459,6 +482,9 @@ class SnakeFrameApp:
                 list(self._eval_suite_controller_summary.get("rows", [])),
             )
         )
+        mean_interventions_pct = self._extract_mean_interventions_pct(dict(self._eval_suite_controller_summary))
+        if mean_interventions_pct is not None:
+            comparison["mean_interventions_pct"] = float(mean_interventions_pct)
         suite = {
             "generated_at_utc": generated.isoformat(),
             "suite_started_at_unix_s": float(self._eval_suite_started_at_unix_s),

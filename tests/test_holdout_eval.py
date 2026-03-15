@@ -90,6 +90,13 @@ class TestHoldoutEval(unittest.TestCase):
             msg = self._wait(ctl)
             self.assertIsNotNone(msg)
             self.assertNotIn("failed", str(msg).lower())
+            latest = json.loads((Path(tmpdir) / "latest_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("mean_interventions_pct", latest)
+            self.assertIn("controller_telemetry_rows", latest)
+            rows = list(latest["controller_telemetry_rows"])
+            self.assertEqual(len(rows), 1)
+            self.assertGreaterEqual(float(latest["mean_interventions_pct"]), 0.0)
+            self.assertGreaterEqual(float(rows[0]["interventions_pct"]), 0.0)
 
     def test_controller_mode_trace_writes_seed_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

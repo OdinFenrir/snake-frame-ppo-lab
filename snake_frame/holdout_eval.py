@@ -39,6 +39,13 @@ def _summary(scores: list[int]) -> dict[str, float | int]:
     }
 
 
+def _mean_interventions_pct(rows: list[dict[str, float | int]]) -> float:
+    if not rows:
+        return 0.0
+    vals = [float(r.get("interventions_pct", 0.0)) for r in rows]
+    return float(sum(vals) / float(len(vals)))
+
+
 @dataclass(frozen=True)
 class HoldoutEvalSnapshot:
     active: bool
@@ -195,7 +202,7 @@ class HoldoutEvalController:
                     with self._lock:
                         self._completed = int(idx + 1)
             else:
-                rows = self._eval_with_controller(
+                rows, telemetry_rows = self._eval_with_controller(
                     seeds=seeds,
                     max_steps=int(max_steps),
                     model_selector=str(model_selector),
@@ -213,6 +220,9 @@ class HoldoutEvalController:
                 "scores": _summary(scores),
                 "rows": rows,
             }
+            if mode == self.MODE_CONTROLLER_ON:
+                summary["controller_telemetry_rows"] = telemetry_rows
+                summary["mean_interventions_pct"] = _mean_interventions_pct(telemetry_rows)
             self.out_dir.mkdir(parents=True, exist_ok=True)
             latest = self.out_dir / "latest_summary.json"
             stamped = self.out_dir / f"summary_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
@@ -278,9 +288,10 @@ class HoldoutEvalController:
         model_selector: str,
         trace_enabled: bool,
         trace_tag: str,
-    ) -> list[dict[str, int]]:
+    ) -> tuple[list[dict[str, int]], list[dict[str, float | int]]]:
         _ = model_selector
         rows: list[dict[str, int]] = []
+        telemetry_rows: list[dict[str, float | int]] = []
         trace_root: Path | None = None
         if bool(trace_enabled):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -349,6 +360,20 @@ class HoldoutEvalController:
                     )
                     self._append_jsonl(seed_trace_path, row)
             rows.append({"seed": int(seed), "score": int(game.score)})
+            get_snap = getattr(gameplay, "telemetry_snapshot", None)
+            snap = get_snap() if callable(get_snap) else None
+            decisions = int(getattr(snap, "decisions_total", 0))
+            interventions = int(getattr(snap, "interventions_total", 0))
+            intervention_pct = 100.0 * float(interventions) / float(max(1, decisions))
+            telemetry_rows.append(
+                {
+                    "seed": int(seed),
+                    "score": int(game.score),
+                    "decisions": int(decisions),
+                    "interventions": int(interventions),
+                    "interventions_pct": float(intervention_pct),
+                }
+            )
             with self._lock:
                 self._completed = int(idx + 1)
-        return rows
+        return rows, telemetry_rows

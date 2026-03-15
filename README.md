@@ -105,11 +105,27 @@ Core artifacts:
 - Holdout suite: `artifacts/live_eval/suites/latest_suite.json`
 - Focused worst-seed report: `artifacts/live_eval/worst10_latest.json`
 - Focused per-step traces: `artifacts/live_eval/focused_traces/<timestamp>_<tag>/seed_<seed>.jsonl`
+- Controller gate result: `artifacts/live_eval/controller_candidate_gate.json`
 
 Useful scripts:
 - `scripts/worst_seed_gate.py`
 - `scripts/focused_controller_trace.py`
 - `scripts/post_run_suite.py`
+- `scripts/controller_candidate_gate.py`
+
+Controller suite contract (automatic):
+- `controller_on` summaries now emit:
+  - `mean_interventions_pct`
+  - `controller_telemetry_rows` (per-seed decisions/interventions/interventions_pct)
+- `latest_suite.json` now carries `comparison.mean_interventions_pct` for gate enforcement.
+
+Dashboard acceptance path:
+1. Lint
+2. Tests
+3. Render regression
+4. Smoke median perf gate
+5. Determinism drift check
+6. Controller candidate gate (hard fail on reject)
 
 ## Evaluation Protocol + Current Baseline
 
@@ -123,10 +139,11 @@ Protocol used for comparable controller-vs-PPO checks:
 5. Re-check repeatability on worst-10 seeds from `artifacts/live_eval/worst10_latest.json`.
 
 Current validated baseline (fixed-seed paired run):
-- `ppo_only` mean: `142.6`
-- `controller_on` mean: `140.17`
-- mean delta (`controller - ppo`): `-2.43`
-- paired seeds: `30` (`17` worse, `13` improved, `0` equal)
+- `ppo_only` mean: `56.67`
+- `controller_on` mean: `81.27`
+- mean delta (`controller - ppo`): `+24.6`
+- mean intervention rate (`controller_on`): `3.22%`
+- paired seeds: `30` (`9` worse, `18` improved, `3` equal)
 
 Worst-10 repeatability check (controller-on, same seeds run twice):
 - run 1 mean: `112.5`

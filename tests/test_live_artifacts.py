@@ -60,6 +60,7 @@ class TestLiveArtifacts(unittest.TestCase):
             app._eval_suite_controller_summary = {
                 "scores": {"count": 3, "mean": 95.0, "median": 96.0, "p90": 120.0},
                 "rows": [{"seed": 1, "score": 90}, {"seed": 2, "score": 96}, {"seed": 3, "score": 99}],
+                "mean_interventions_pct": 4.5,
             }
 
             stamped, message = SnakeFrameApp._persist_eval_suite_bundle(app)
@@ -90,6 +91,7 @@ class TestLiveArtifacts(unittest.TestCase):
             self.assertEqual(int(cmp["paired_equal_count"]), 0)
             self.assertAlmostEqual(float(cmp["paired_mean_delta_controller_minus_ppo"]), -15.0)
             self.assertAlmostEqual(float(cmp["paired_median_delta_controller_minus_ppo"]), -11.0)
+            self.assertAlmostEqual(float(cmp["mean_interventions_pct"]), 4.5)
 
     def test_eval_suite_prunes_old_stamped_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
