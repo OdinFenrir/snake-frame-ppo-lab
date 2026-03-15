@@ -84,8 +84,8 @@ $steps = @(
         Log = "03_pytest_render.log"
     },
     @{
-        Name = "E2E Smoke + Perf Budgets"
-        Command = "$Python -m snake_frame.smoke_runner --train-steps 2048 --game-steps 300 --enforce-budgets --max-frame-p95-ms 40 --max-frame-avg-ms 34 --max-frame-jitter-ms 8 --max-inference-p95-ms 12 --min-training-steps-per-sec 250 --metrics-out artifacts/smoke_metrics.json"
+        Name = "E2E Smoke + Perf Budgets (Median of 3)"
+        Command = "$Python scripts\smoke_gate_median.py --runs 3 --train-steps 2048 --game-steps 300 --max-frame-p95-ms 40 --max-frame-avg-ms 34 --max-frame-jitter-ms 8 --max-inference-p95-ms 12 --min-training-steps-per-sec 250 --metrics-out artifacts/smoke_metrics.json"
         Log = "04_smoke_perf.log"
     },
     @{

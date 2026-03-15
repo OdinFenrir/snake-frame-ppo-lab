@@ -377,6 +377,14 @@ class PpoSnakeAgent:
             raise ValueError("PpoConfig.policy_net_arch must not be empty")
         if any(int(layer) <= 0 for layer in config.policy_net_arch):
             raise ValueError("PpoConfig.policy_net_arch values must be positive")
+        pi_arch = getattr(config, "policy_net_arch_pi", None)
+        vf_arch = getattr(config, "policy_net_arch_vf", None)
+        if pi_arch is not None and any(int(layer) <= 0 for layer in pi_arch):
+            raise ValueError("PpoConfig.policy_net_arch_pi values must be positive")
+        if vf_arch is not None and any(int(layer) <= 0 for layer in vf_arch):
+            raise ValueError("PpoConfig.policy_net_arch_vf values must be positive")
+        if (pi_arch is None) ^ (vf_arch is None):
+            raise ValueError("PpoConfig.policy_net_arch_pi and policy_net_arch_vf must be provided together")
 
     @property
     def model_path(self) -> Path:
@@ -420,6 +428,18 @@ class PpoSnakeAgent:
         if self.artifact_dir.name == "v2" and self.artifact_dir.parent.name == "ppo":
             return self.artifact_dir.parent.parent / "ppo_snake_model.zip"
         return self.artifact_dir.parent / "ppo_snake_model.zip"
+
+    def _policy_kwargs(self) -> dict:
+        pi_arch = getattr(self.config, "policy_net_arch_pi", None)
+        vf_arch = getattr(self.config, "policy_net_arch_vf", None)
+        if pi_arch is not None and vf_arch is not None:
+            return {
+                "net_arch": {
+                    "pi": [int(v) for v in pi_arch],
+                    "vf": [int(v) for v in vf_arch],
+                }
+            }
+        return {"net_arch": [int(v) for v in self.config.policy_net_arch]}
 
     def _last_model_path(self) -> Path:
         return self.artifact_dir / "last_model.zip"
@@ -1044,7 +1064,7 @@ class PpoSnakeAgent:
                     clip_range=self.config.clip_range,
                     target_kl=self.config.target_kl,
                     ent_coef=float(self.config.ent_coef_start),
-                    policy_kwargs={"net_arch": list(self.config.policy_net_arch)},
+                    policy_kwargs=self._policy_kwargs(),
                     device=self.device,
                     seed=self.config.seed,
                 )

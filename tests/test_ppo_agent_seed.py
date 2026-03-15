@@ -24,6 +24,25 @@ class _FakeVecEnv:
 
 
 class TestPpoAgentSeed(unittest.TestCase):
+    def test_config_rejects_partial_split_policy_architecture(self) -> None:
+        bad_config = PpoConfig(
+            env_count=1,
+            n_steps=8,
+            batch_size=4,
+            n_epochs=2,
+            policy_net_arch_pi=(128, 64),
+            policy_net_arch_vf=None,
+        )
+        with self.assertRaisesRegex(ValueError, "must be provided together"):
+            PpoSnakeAgent(
+                settings=Settings(),
+                artifact_dir=Path("state/ppo/v2_seed_test"),
+                config=bad_config,
+                reward_config=RewardConfig(),
+                obs_config=ObsConfig(),
+                autoload=False,
+            )
+
     def test_train_passes_seed_to_ppo_constructor(self) -> None:
         config = PpoConfig(
             env_count=1,
@@ -92,6 +111,44 @@ class TestPpoAgentSeed(unittest.TestCase):
 
         kwargs = mock_ppo.call_args.kwargs
         self.assertEqual(float(kwargs.get("target_kl")), 0.03)
+
+    def test_train_supports_split_policy_architecture(self) -> None:
+        config = PpoConfig(
+            env_count=1,
+            n_steps=8,
+            batch_size=4,
+            n_epochs=2,
+            policy_net_arch=(64, 64),
+            policy_net_arch_pi=(128, 64),
+            policy_net_arch_vf=(64, 32),
+        )
+        agent = PpoSnakeAgent(
+            settings=Settings(),
+            artifact_dir=Path("state/ppo/v2_seed_test"),
+            config=config,
+            reward_config=RewardConfig(),
+            obs_config=ObsConfig(),
+            autoload=False,
+        )
+
+        fake_model = MagicMock()
+        fake_model.num_timesteps = 0
+        fake_model.learn.side_effect = lambda *, total_timesteps, callback, reset_num_timesteps: setattr(
+            fake_model, "num_timesteps", int(fake_model.num_timesteps) + int(total_timesteps)
+        )
+
+        with (
+            patch.object(agent, "_save_last_and_stats", return_value=ModelOpResult(ok=True, code=ModelOpCode.OK)),
+            patch.object(agent, "load_if_exists_detailed", return_value=ModelOpResult(ok=True, code=ModelOpCode.OK)),
+            patch("snake_frame.ppo_agent.PPO", return_value=fake_model) as mock_ppo,
+        ):
+            agent.train(total_timesteps=16, stop_flag=lambda: False)
+
+        kwargs = mock_ppo.call_args.kwargs
+        policy_kwargs = kwargs.get("policy_kwargs", {})
+        net_arch = policy_kwargs.get("net_arch", {})
+        self.assertEqual(net_arch.get("pi"), [128, 64])
+        self.assertEqual(net_arch.get("vf"), [64, 32])
 
     def test_train_raises_when_post_train_save_fails(self) -> None:
         config = PpoConfig(

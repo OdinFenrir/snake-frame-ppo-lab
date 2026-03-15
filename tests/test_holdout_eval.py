@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -88,6 +89,39 @@ class TestHoldoutEval(unittest.TestCase):
             msg = self._wait(ctl)
             self.assertIsNotNone(msg)
             self.assertNotIn("failed", str(msg).lower())
+
+    def test_controller_mode_trace_writes_seed_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ctl = HoldoutEvalController(
+                agent=_FakeAgent(),
+                settings=Settings(),
+                obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True),
+                reward_config=RewardConfig(),
+                out_dir=Path(tmpdir),
+            )
+            self.assertTrue(
+                ctl.start(
+                    mode=HoldoutEvalController.MODE_CONTROLLER_ON,
+                    seeds=[17001],
+                    max_steps=220,
+                    model_selector="best",
+                    trace_enabled=True,
+                    trace_tag="worst10",
+                )
+            )
+            msg = self._wait(ctl, timeout_s=6.0)
+            self.assertIsNotNone(msg)
+            trace_root = Path(tmpdir) / "focused_traces"
+            traces = list(trace_root.glob("**/seed_17001.jsonl"))
+            self.assertTrue(traces)
+            rows = [line.strip() for line in traces[0].read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertTrue(rows)
+            sample = json.loads(rows[0])
+            self.assertIn("decision_index", sample)
+            self.assertIn("mode", sample)
+            self.assertIn("switch_reason", sample)
+            self.assertIn("score_before", sample)
+            self.assertIn("score_after", sample)
 
     def test_training_active_does_not_start_or_reload_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

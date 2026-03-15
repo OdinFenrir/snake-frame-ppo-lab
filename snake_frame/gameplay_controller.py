@@ -146,8 +146,20 @@ class GameplayController:
         self._death_confidences: deque[float] = deque(maxlen=120)
         self._last_chosen_confidence: float | None = None
         self._last_predicted_confidence: float | None = None
+        self._last_action_probs: tuple[float, float, float] | None = None
+        self._last_predicted_action: int | None = None
+        self._last_chosen_action: int | None = None
         self._last_chosen_tail_reachable = True
         self._last_capacity_shortfall = 0
+        self._last_proposed_tail_reachable = True
+        self._last_proposed_capacity_shortfall = 0
+        self._last_food_pressure = 0.0
+        self._last_free_ratio = 0.0
+        self._last_safe_option_count = 3
+        self._narrow_corridor_streak = 0
+        self._last_cycle_repeat = False
+        self._last_imminent_danger = False
+        self._last_proposed_viable = False
         self._space_strategy_enabled = bool(space_strategy_enabled)
         self._escape_controller = EscapeController()
         self._space_fill_controller = SpaceFillController()
@@ -343,7 +355,10 @@ class GameplayController:
             except Exception:
                 predicted_confidence = None
         self._last_predicted_confidence = predicted_confidence
+        self._last_action_probs = action_probs
+        self._last_predicted_action = int(predicted_action)
         action = self._choose_safe_action(predicted_action)
+        self._last_chosen_action = int(action)
         self._record_decision(
             predicted_action=predicted_action,
             chosen_action=action,
@@ -437,8 +452,21 @@ class GameplayController:
         snake = list(self.game.snake)
         direction = tuple(self.game.direction)
         food = tuple(self.game.food)
+        safe_option_count = 0
+        head = snake[0]
+        for action in (0, 1, 2):
+            cand_dir = action_to_direction(direction, action)
+            cand_head = next_head(head, cand_dir)
+            if not is_danger(board_cells, snake, cand_head):
+                safe_option_count += 1
+        self._last_safe_option_count = int(safe_option_count)
+        if int(safe_option_count) <= 1:
+            self._narrow_corridor_streak += 1
+        else:
+            self._narrow_corridor_streak = 0
         board_total = max(1, int(board_cells * board_cells))
         free_ratio = float(max(0, board_total - len(snake))) / float(board_total)
+        self._last_free_ratio = float(max(0.0, min(1.0, free_ratio)))
         crowded = bool(self._space_strategy_enabled and free_ratio <= float(self._CROWDED_FREE_RATIO_THRESHOLD))
         food_weight = float(self._FOOD_DIST_WEIGHT_CROWDED if crowded else (self._FOOD_DIST_WEIGHT_OPEN if self._space_strategy_enabled else self._FOOD_DIST_WEIGHT))
         capacity_penalty_scale = float(self._CROWDED_CAPACITY_PENALTY_SCALE) if crowded else 1.0
@@ -472,7 +500,9 @@ class GameplayController:
 
         no_progress_steps = int(self._decisions_total - self._dynamic.last_food_step)
         food_pressure = self._food_pressure(no_progress_steps=no_progress_steps)
+        self._last_food_pressure = float(max(0.0, min(1.0, food_pressure)))
         cycle_repeat = self._register_cycle_state(snake=snake, direction=direction, board_cells=board_cells, free_ratio=free_ratio, proposed_eval=proposed_eval)
+        self._last_cycle_repeat = bool(cycle_repeat)
         if cycle_repeat:
             self._cycle_repeats_total += 1
         starvation_ratio = self._starvation_progress_ratio()
@@ -489,20 +519,40 @@ class GameplayController:
             capacity_shortfall=int(proposed_eval[2]),
             food_pressure=food_pressure,
         )
+        relaxed_open_viable = bool(
+            proposed_eval is not None
+            and int(safe_option_count) >= 3
+            and float(free_ratio) >= 0.80
+            and bool(proposed_eval[1])
+            and float(food_pressure) <= 0.70
+        )
+        effective_proposed_viable = bool(proposed_viable) or bool(relaxed_open_viable)
+        self._last_proposed_viable = bool(effective_proposed_viable)
+        if proposed_eval is not None:
+            self._last_proposed_tail_reachable = bool(proposed_eval[1])
+            self._last_proposed_capacity_shortfall = int(proposed_eval[2])
+        else:
+            self._last_proposed_tail_reachable = False
+            self._last_proposed_capacity_shortfall = 0
         # Trust high-confidence PPO decisions when they are viable and not near starvation pressure.
         # This reduces controller over-intervention that can underperform PPO-only evaluation.
         conf_threshold = float(getattr(self._dynamic_cfg, "ppo_confidence_trust_threshold", 1.0))
         conf_pressure_max = float(getattr(self._dynamic_cfg, "ppo_confidence_trust_food_pressure_max", 0.0))
         conf_min_free_ratio = float(getattr(self._dynamic_cfg, "ppo_confidence_trust_min_free_ratio", 0.0))
+        conf_min_safe_options = max(1, int(getattr(self._dynamic_cfg, "ppo_confidence_trust_min_safe_options", 2)))
+        narrow_corridor_trigger = max(1, int(getattr(self._dynamic_cfg, "narrow_corridor_trigger_steps", 6)))
         high_conf_ppo = bool(
             self._last_predicted_confidence is not None
             and float(self._last_predicted_confidence) >= conf_threshold
         )
+        narrow_corridor_risk = bool(int(safe_option_count) <= 1 and int(self._narrow_corridor_streak) >= int(narrow_corridor_trigger))
         if (
-            proposed_viable
+            effective_proposed_viable
             and high_conf_ppo
             and float(food_pressure) <= conf_pressure_max
             and float(free_ratio) >= conf_min_free_ratio
+            and int(safe_option_count) >= int(conf_min_safe_options)
+            and not bool(narrow_corridor_risk)
         ):
             self._decision_mode_now = ControlMode.PPO
             self._dynamic.last_switch_reason = "ppo_conf_trust"
@@ -510,16 +560,18 @@ class GameplayController:
             self._last_capacity_shortfall = int(proposed_eval[2]) if proposed_eval is not None else 0
             return int(proposed_action)
         imminent_danger = bool(proposed_eval is None)
+        self._last_imminent_danger = bool(imminent_danger)
         risk_override_trigger = bool(
             imminent_danger
             or cycle_repeat
             or int(no_progress_steps) >= int(self._dynamic_cfg.no_progress_steps_space_fill)
             or float(food_pressure) >= float(self._FOOD_PRESSURE_TRIGGER)
+            or bool(narrow_corridor_risk)
         )
         # Avoid broad over-intervention: if PPO action is not strictly "viable" but
         # risk pressure is still low, keep PPO action and monitor progression.
         tail_unreachable = bool(proposed_eval is not None and not bool(proposed_eval[1]))
-        if (not bool(proposed_viable)) and (not risk_override_trigger) and (not tail_unreachable):
+        if (not bool(effective_proposed_viable)) and (not risk_override_trigger) and (not tail_unreachable):
             self._decision_mode_now = ControlMode.PPO
             self._dynamic.last_switch_reason = "ppo_tolerate_low_risk"
             if proposed_eval is not None:
@@ -529,7 +581,9 @@ class GameplayController:
                 self._last_chosen_tail_reachable = True
                 self._last_capacity_shortfall = 0
             return int(proposed_action)
-        significant_risk = bool((not bool(proposed_viable)) and risk_override_trigger)
+        significant_risk = bool((not bool(effective_proposed_viable)) and risk_override_trigger)
+        if bool(narrow_corridor_risk):
+            significant_risk = True
         mode = self._select_mode(
             significant_risk=significant_risk,
             imminent_danger=imminent_danger,
@@ -540,8 +594,9 @@ class GameplayController:
         warmup_steps = max(0, int(getattr(self._dynamic_cfg, "dynamic_warmup_steps", 0)))
         if (
             mode == ControlMode.PPO
-            and proposed_viable
+            and effective_proposed_viable
             and int(self._decisions_total) < warmup_steps
+            and not bool(narrow_corridor_risk)
         ):
             self._dynamic.last_switch_reason = "warmup_ppo"
             self._last_chosen_tail_reachable = True
@@ -550,8 +605,9 @@ class GameplayController:
 
         if (
             mode == ControlMode.PPO
-            and proposed_viable
+            and effective_proposed_viable
             and int(self._loop_escape_steps_left) <= 0
+            and not bool(narrow_corridor_risk)
         ):
             self._last_chosen_tail_reachable = True
             self._last_capacity_shortfall = int(proposed_eval[2]) if proposed_eval is not None else 0
@@ -626,6 +682,19 @@ class GameplayController:
                 food_weight=food_weight,
                 capacity_penalty_scale=capacity_penalty_scale,
             )
+        open_field_pressure_max = float(getattr(self._dynamic_cfg, "ppo_open_field_trust_food_pressure_max", 0.35))
+        open_field_trust = bool(
+            mode == ControlMode.PPO
+            and int(action) != int(proposed_action)
+            and bool(proposed_viable)
+            and int(safe_option_count) >= 3
+            and float(food_pressure) <= float(open_field_pressure_max)
+            and int(no_progress_steps) < int(self._dynamic_cfg.no_progress_steps_escape)
+            and proposed_eval is not None
+        )
+        if open_field_trust:
+            action = int(proposed_action)
+            self._dynamic.last_switch_reason = "ppo_open_field_trust"
         chosen_eval = self._evaluate_action(
             board_cells=board_cells,
             snake=snake,
@@ -642,7 +711,7 @@ class GameplayController:
             and chosen_eval is not None
             and bool(getattr(self._dynamic_cfg, "enable_learned_arbiter", False))
             and mode == ControlMode.PPO
-            and proposed_viable
+            and effective_proposed_viable
             and int(self._loop_escape_steps_left) <= 0
         ):
             features = self._decision_features(
@@ -651,7 +720,7 @@ class GameplayController:
                 no_progress_steps=no_progress_steps,
                 cycle_repeat=cycle_repeat,
                 imminent_danger=imminent_danger,
-                proposed_viable=proposed_viable,
+                proposed_viable=effective_proposed_viable,
                 proposed_eval=proposed_eval,
                 chosen_eval=chosen_eval,
             )
@@ -679,7 +748,7 @@ class GameplayController:
             no_progress_steps=no_progress_steps,
             cycle_repeat=cycle_repeat,
             imminent_danger=imminent_danger,
-            proposed_viable=proposed_viable,
+            proposed_viable=effective_proposed_viable,
             proposed_eval=proposed_eval,
             chosen_eval=chosen_eval,
         )
@@ -1327,6 +1396,53 @@ class GameplayController:
             last_death_reason=str(self._last_death_reason),
         )
 
+    def decision_trace_snapshot(self) -> dict[str, object]:
+        no_progress_steps = int(max(0, self._decisions_total - self._dynamic.last_food_step))
+        starvation_steps = int(getattr(self.game, "steps_without_food", 0))
+        starvation_limit = int(getattr(self.game, "starvation_limit", lambda: 0)())
+        row: dict[str, object] = {
+            "decision_index": int(self._decisions_total),
+            "predicted_action": None if self._last_predicted_action is None else int(self._last_predicted_action),
+            "chosen_action": None if self._last_chosen_action is None else int(self._last_chosen_action),
+            "override_used": bool(
+                self._last_predicted_action is not None
+                and self._last_chosen_action is not None
+                and int(self._last_predicted_action) != int(self._last_chosen_action)
+            ),
+            "action_probs": None if self._last_action_probs is None else [float(v) for v in self._last_action_probs],
+            "predicted_confidence": None if self._last_predicted_confidence is None else float(self._last_predicted_confidence),
+            "chosen_confidence": None if self._last_chosen_confidence is None else float(self._last_chosen_confidence),
+            "mode": str(self.current_control_mode()),
+            "switch_reason": str(self.last_mode_switch_reason()),
+            "free_ratio": float(self._last_free_ratio),
+            "food_pressure": float(self._last_food_pressure),
+            "safe_option_count": int(self._last_safe_option_count),
+            "narrow_corridor_streak": int(self._narrow_corridor_streak),
+            "cycle_repeat": bool(self._last_cycle_repeat),
+            "imminent_danger": bool(self._last_imminent_danger),
+            "proposed_viable": bool(self._last_proposed_viable),
+            "proposed_tail_reachable": bool(self._last_proposed_tail_reachable),
+            "proposed_capacity_shortfall": int(self._last_proposed_capacity_shortfall),
+            "chosen_tail_reachable": bool(self._last_chosen_tail_reachable),
+            "chosen_capacity_shortfall": int(self._last_capacity_shortfall),
+            "no_progress_steps": int(no_progress_steps),
+            "starvation_steps": int(starvation_steps),
+            "starvation_limit": int(starvation_limit),
+            "loop_escape_steps_left": int(self._loop_escape_steps_left),
+            "interventions_total": int(self._interventions_total),
+            "pocket_risk_total": int(self._pocket_risk_total),
+            "cycle_repeats_total": int(self._cycle_repeats_total),
+        }
+        snapshot = self._debug_snapshot
+        if snapshot is not None:
+            row["candidate_reachable_ratio"] = {
+                str(int(candidate.action)): float(candidate.reachable_ratio) for candidate in snapshot.candidates
+            }
+            row["candidate_danger"] = {
+                str(int(candidate.action)): bool(candidate.danger) for candidate in snapshot.candidates
+            }
+        return row
+
     def reset_episode_tracking(self) -> None:
         self._reset_dynamic_state()
         self._last_score_seen = int(getattr(self.game, "score", 0))
@@ -1465,3 +1581,4 @@ class GameplayController:
         self._loop_escape_cooldown_until = 0
         self._decision_mode_now = ControlMode.PPO
         self._episode_stuck = False
+        self._narrow_corridor_streak = 0

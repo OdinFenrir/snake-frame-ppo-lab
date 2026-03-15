@@ -1,63 +1,133 @@
 # Architecture
 
-## Runtime Modules
+## 1. System Overview
 
-- `snake_frame/app.py`: top-level app composition and state wiring.
-- `snake_frame/app_events.py`: window/global event handling and resize/window lifecycle routing.
-- `snake_frame/app_rendering.py`: rendering pipeline, overlays, options modal rendering.
-- `snake_frame/app_orchestrator.py`: runtime loop orchestration.
-- `snake_frame/layout_engine.py`: single source of truth for responsive layout metrics.
-- `snake_frame/ui_state_model.py`: runtime model/training state machine used by UI controls.
-- `snake_frame/panel_ui.py` + `snake_frame/graph_renderer.py`: panel rendering and graph drawing with caching.
-- `snake_frame/theme.py`: centralized color palettes + typed design tokens (typography/spacing/component sizing).
-- `snake_frame/game.py` + `snake_frame/gameplay_controller.py`: gameplay update/render and agent safety override logic.
-- `snake_frame/ppo_agent.py` + `snake_frame/training.py`: PPO lifecycle, inference sync, and threaded training.
-- `snake_frame/state_io.py`: versioned UI state persistence (`uiStateVersion` payload field).
-- `snake_frame/smoke_runner.py`: headless end-to-end smoke/perf harness used by CI.
-- `snake_frame/diagnostics.py`: one-click diagnostics bundle generation.
+`Snake Frame PPO Lab` is a single-desktop Python application that combines:
+- interactive gameplay and rendering (`pygame`)
+- PPO training/inference (`stable-baselines3` + `sb3-contrib`)
+- a safety/controller layer that can arbitrate policy actions
+- persistence + diagnostics pipelines for iterative tuning
 
-## State Contracts
+The architecture is optimized for iterative experimentation:
+- run training in-app
+- evaluate holdout seeds
+- inspect artifacts and traces
+- apply targeted controller/policy updates
 
-- Model state: `none | loading | ready | unavailable | syncing`
-- Training state: `idle | running | stopping | completed | error`
-- UI state payload version: `uiStateVersion=2` with backward migration from v1.
-- Unsupported future UI payload versions are rejected with explicit `unsupported_schema` errors.
-- UI preferences payload includes visual/runtime toggles such as:
-  - `themeName`
-  - `boardBackgroundMode` (`grid|grass|background`)
-  - window mode/size and debug overlays
-- Control policy:
-  - Agent control is enabled only when model state is `ready`.
-  - Storage mutation actions (`save/load/delete`) are disabled during active/stopping training.
-  - Save path uses temporary rollback files during write/migration to recover from partial writes.
+## 2. Runtime Composition
 
-## Layout Contract
+Primary composition entry:
+- `snake_frame/app.py`
 
-- Window is `RESIZABLE`.
-- Board stays square.
-- Left and right panels resize proportionally with minimum width guards.
-- Layout is recomputed on window resize events; UI rects are rebuilt from layout metrics.
-- Options modal includes runtime visual selectors for:
-  - Board background mode cycling (`Grid`, `Grass`, `Background`)
+Factory wiring:
+- `snake_frame/app_factory.py`
 
-## Asset Contract
+Core runtime modules:
+- `snake_frame/game.py`: game state, mechanics, board updates, rendering primitives
+- `snake_frame/gameplay_controller.py`: policy+controller action selection and telemetry
+- `snake_frame/ppo_agent.py`: PPO model lifecycle (train/load/save/eval/inference sync)
+- `snake_frame/training.py`: threaded training controller
+- `snake_frame/holdout_eval.py`: holdout eval orchestration (`ppo_only`/`controller_on`)
+- `snake_frame/state_io.py`: UI state schema and recovery behavior
+- `snake_frame/app_rendering.py`, `panel_ui.py`, `graph_renderer.py`: dashboard rendering
 
-- Sprite root is `sprites/`.
-- Reserved board background filenames:
-  - `snake_board_grass.png`
-  - `background.jpg|background.jpeg|background.png`
-- Food uses the built-in procedural apple renderer (no food image assets required).
+## 3. Decision Stack (Agent Intelligence)
 
-## Performance Contract
+Per decision tick (`gameplay_controller`):
+1. Build observation + action mask
+2. Query PPO action and probabilities
+3. Evaluate action viability/risk
+4. Optionally arbitrate via controller modes:
+   - `ppo` (trust policy)
+   - `escape`
+   - `space_fill`
+5. Optionally apply learned memory influence:
+   - learned arbiter model
+   - tactic memory bank
+6. Queue final direction into game loop
 
-- Static panel background and board grid are cached.
-- Graph point transforms are cached by `(rect, score-series)`.
-- Text rendering is cached with soft cache caps.
-- Debug overlay can show rolling frame timing metrics (avg/p95 ms).
-- CI smoke validates frame-time p95, inference-step p95, and training throughput budgets.
+Important telemetry fields include:
+- interventions, risk counters, mode switches
+- loop/cycle indicators
+- death reason distributions
 
-## Dependency Policy
+## 4. Learning Memory Extensions
 
-- `requirements.txt`: bounded ranges for routine upgrades.
-- `requirements-lock.txt`: exact versions used by CI and reproducible local setup.
-- Quarterly CI schedule validates dependency health and compatibility.
+Persisted under `state/ppo/v2/`:
+- `arbiter_model.json`
+- `tactic_memory.json`
+
+Purpose:
+- retain controller-side adaptation signals between sessions
+- bias arbitration away from repeated harmful interventions
+
+## 5. Artifact Contracts
+
+### Model Artifacts
+
+- `state/ppo/v2/last_model.zip`
+- `state/ppo/v2/best_model.zip`
+- `state/ppo/v2/best_score_model.zip`
+- `state/ppo/v2/vecnormalize.pkl`
+- `state/ppo/v2/metadata.json`
+
+### Evaluation Artifacts
+
+- `artifacts/live_eval/latest_summary.json`
+- `artifacts/live_eval/suites/latest_suite.json`
+- `artifacts/live_eval/worst10_latest.json`
+
+### Focused Trace Artifacts
+
+- `artifacts/live_eval/focused_traces/<timestamp>_<tag>/seed_<seed>.jsonl`
+
+Per-step rows include:
+- predicted vs chosen action
+- override flags
+- switch reason/mode
+- action probabilities
+- risk/viability features
+- step outcome (`score_before/after`, `death_reason`, `game_over`)
+
+## 6. Validation and Quality Gates
+
+### Local/CI Gates
+
+- static lint: `ruff`
+- full test suite: `pytest`
+- deterministic drift check: `scripts/validate_determinism.py`
+- smoke performance gate (median-of-3): `scripts/smoke_gate_median.py`
+
+### Focused Regression Gates
+
+- worst-seed extraction/enforcement: `scripts/worst_seed_gate.py`
+- focused trace capture for root-cause analysis: `scripts/focused_controller_trace.py`
+
+## 7. State and Schema Guarantees
+
+- UI persistence uses a versioned schema (`uiStateVersion`)
+- unsupported future schemas are rejected explicitly (safe failure)
+- model/load errors propagate as structured operation codes
+
+## 8. Concurrency Model
+
+- UI/render loop on main thread
+- PPO training on worker thread (`training.py`)
+- holdout evaluation on dedicated worker thread (`holdout_eval.py`)
+
+Guardrails:
+- training-active checks prevent unsafe eval artifact mutation
+- model selector/load flows explicitly validated before eval runs
+
+## 9. Repository Structure
+
+- `snake_frame/`: application and ML/control core
+- `scripts/`: evaluation, diagnostics, deterministic/smoke tools
+- `tests/`: unit/integration regression coverage
+- `.github/workflows/`: CI/release workflows
+
+## 10. Current Engineering Priorities
+
+1. Reduce controller-on underperformance on hard holdout seeds.
+2. Keep smoke and determinism gates green under strict thresholds.
+3. Preserve artifact compatibility and reproducibility while iterating.

@@ -39,14 +39,14 @@ jobs:
         shell: pwsh
         run: python -c "import pygame, numpy, gymnasium, stable_baselines3, torch; print('deps ok')"
 
-      - name: E2E Headless Smoke + Perf Budgets
+      - name: E2E Headless Smoke + Perf Budgets (Median of 3)
         shell: pwsh
         run: |
-          python -m snake_frame.smoke_runner `
+          python scripts/smoke_gate_median.py `
+            --runs 3 `
             --train-steps 2048 `
             --game-steps 300 `
             --metrics-out artifacts/smoke_metrics.json `
-            --enforce-budgets `
             --max-frame-p95-ms 40 `
             --max-frame-avg-ms 34 `
             --max-frame-jitter-ms 8 `

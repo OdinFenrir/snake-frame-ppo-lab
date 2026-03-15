@@ -39,6 +39,8 @@ class TestPpoProfiles(unittest.TestCase):
         self.assertEqual(cfg.env_count, 8)
         self.assertEqual(cfg.n_steps, 1024)
         self.assertEqual(cfg.batch_size, 256)
+        self.assertIsNone(cfg.policy_net_arch_pi)
+        self.assertIsNone(cfg.policy_net_arch_vf)
 
 
 if __name__ == "__main__":

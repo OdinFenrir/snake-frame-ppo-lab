@@ -103,6 +103,8 @@ class HoldoutEvalController:
         model_selector: str = "best",
         seeds: Iterable[int] | None = None,
         max_steps: int = 5000,
+        trace_enabled: bool = False,
+        trace_tag: str = "",
     ) -> bool:
         if self._is_agent_training_active():
             with self._lock:
@@ -133,6 +135,8 @@ class HoldoutEvalController:
                 "model_selector": str(model_selector),
                 "seeds": seeds_list,
                 "max_steps": max_steps_i,
+                "trace_enabled": bool(trace_enabled),
+                "trace_tag": str(trace_tag),
             },
             daemon=True,
             name="holdout-eval-worker",
@@ -155,7 +159,16 @@ class HoldoutEvalController:
         if thread is not None:
             thread.join(timeout=0.5)
 
-    def _worker(self, *, mode: str, model_selector: str, seeds: list[int], max_steps: int) -> None:
+    def _worker(
+        self,
+        *,
+        mode: str,
+        model_selector: str,
+        seeds: list[int],
+        max_steps: int,
+        trace_enabled: bool,
+        trace_tag: str,
+    ) -> None:
         rows: list[dict[str, int]] = []
         prev_selector: str | None = None
         try:
@@ -186,6 +199,8 @@ class HoldoutEvalController:
                     seeds=seeds,
                     max_steps=int(max_steps),
                     model_selector=str(model_selector),
+                    trace_enabled=bool(trace_enabled),
+                    trace_tag=str(trace_tag),
                 )
             scores = [int(r["score"]) for r in rows]
             summary = {
@@ -193,6 +208,8 @@ class HoldoutEvalController:
                 "mode": str(mode),
                 "model_selector": str(model_selector),
                 "max_steps": int(max_steps),
+                "trace_enabled": bool(trace_enabled),
+                "trace_tag": str(trace_tag),
                 "scores": _summary(scores),
                 "rows": rows,
             }
@@ -246,9 +263,31 @@ class HoldoutEvalController:
         if callable(basic_loader) and not bool(basic_loader()):
             raise RuntimeError("eval model load failed [missing]")
 
-    def _eval_with_controller(self, *, seeds: list[int], max_steps: int, model_selector: str) -> list[dict[str, int]]:
+    @staticmethod
+    def _append_jsonl(path: Path, row: dict[str, object]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, allow_nan=False))
+            f.write("\n")
+
+    def _eval_with_controller(
+        self,
+        *,
+        seeds: list[int],
+        max_steps: int,
+        model_selector: str,
+        trace_enabled: bool,
+        trace_tag: str,
+    ) -> list[dict[str, int]]:
         _ = model_selector
         rows: list[dict[str, int]] = []
+        trace_root: Path | None = None
+        if bool(trace_enabled):
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            safe_tag = "".join(ch for ch in str(trace_tag) if ch.isalnum() or ch in ("-", "_")).strip("_")
+            suffix = f"_{safe_tag}" if safe_tag else ""
+            trace_root = self.out_dir / "focused_traces" / f"{stamp}{suffix}"
+            trace_root.mkdir(parents=True, exist_ok=True)
         base = Settings(
             board_cells=int(self.settings.board_cells),
             cell_px=int(self.settings.cell_px),
@@ -281,11 +320,33 @@ class HoldoutEvalController:
                 space_strategy_enabled=True,
                 artifact_dir=Path(getattr(self.agent, "artifact_dir", self.out_dir)),
             )
-            for _ in range(int(max_steps)):
+            if bool(trace_enabled):
+                gameplay.set_debug_options(debug_overlay=True, reachable_overlay=False)
+            seed_trace_path = (trace_root / f"seed_{int(seed)}.jsonl") if trace_root is not None else None
+            for step_idx in range(int(max_steps)):
                 if bool(game.game_over):
                     break
+                score_before = int(getattr(game, "score", 0))
+                head_before = tuple(game.snake[0]) if game.snake else None
                 gameplay._apply_agent_control()  # keep controller logic in the eval loop
+                trace_row = gameplay.decision_trace_snapshot() if bool(trace_enabled) else None
                 game.update()
+                if trace_row is not None and seed_trace_path is not None:
+                    row = dict(trace_row)
+                    row.update(
+                        {
+                            "seed": int(seed),
+                            "step": int(step_idx),
+                            "score_before": int(score_before),
+                            "score_after": int(getattr(game, "score", 0)),
+                            "ate_food": bool(int(getattr(game, "score", 0)) > int(score_before)),
+                            "head_before": None if head_before is None else [int(head_before[0]), int(head_before[1])],
+                            "head_after": None if not game.snake else [int(game.snake[0][0]), int(game.snake[0][1])],
+                            "game_over": bool(game.game_over),
+                            "death_reason": str(getattr(game, "death_reason", "none")),
+                        }
+                    )
+                    self._append_jsonl(seed_trace_path, row)
             rows.append({"seed": int(seed), "score": int(game.score)})
             with self._lock:
                 self._completed = int(idx + 1)

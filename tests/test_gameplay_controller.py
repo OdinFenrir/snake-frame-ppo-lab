@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from snake_frame.gameplay_controller import ControlMode, GameplayController
-from snake_frame.settings import ObsConfig, Settings
+from snake_frame.settings import DynamicControlConfig, ObsConfig, Settings
 
 
 class _FakeGame:
@@ -192,6 +192,38 @@ class TestGameplayController(unittest.TestCase):
         snap = ctrl.telemetry_snapshot()
         self.assertGreaterEqual(snap.decisions_total, 1)
         self.assertGreaterEqual(snap.interventions_total, 1)
+
+    def test_decision_trace_snapshot_contains_core_fields(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        agent.predicted_action = 0
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(agent_safety_override=True),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl.set_debug_options(debug_overlay=True, reachable_overlay=False)
+        ctrl.step(True)
+        row = ctrl.decision_trace_snapshot()
+        required = {
+            "decision_index",
+            "predicted_action",
+            "chosen_action",
+            "override_used",
+            "mode",
+            "switch_reason",
+            "free_ratio",
+            "food_pressure",
+            "proposed_viable",
+            "chosen_tail_reachable",
+            "chosen_capacity_shortfall",
+            "interventions_total",
+            "pocket_risk_total",
+        }
+        self.assertTrue(required.issubset(set(row.keys())))
 
     def test_telemetry_tracks_starvation_death_reason(self) -> None:
         game = _FakeGame()
@@ -626,6 +658,69 @@ class TestGameplayController(unittest.TestCase):
             action = ctrl._choose_safe_action(0)
         self.assertEqual(int(action), 0)
         self.assertEqual(str(ctrl.last_mode_switch_reason()), "warmup_ppo")
+
+    def test_choose_safe_action_does_not_force_conf_trust_in_sustained_narrow_corridor(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    ppo_confidence_trust_threshold=0.8,
+                    ppo_confidence_trust_min_safe_options=2,
+                    narrow_corridor_trigger_steps=2,
+                    enable_learned_arbiter=False,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._last_predicted_confidence = 0.99
+        ctrl._narrow_corridor_streak = 2
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, True, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.ESCAPE),
+            patch.object(ctrl, "_evaluate_action", return_value=(100.0, True, 0)),
+            patch.object(ctrl._escape_controller, "choose_action", return_value=1),
+        ):
+            action = ctrl._choose_safe_action(0)
+        self.assertEqual(int(action), 1)
+        self.assertNotEqual(str(ctrl.last_mode_switch_reason()), "ppo_conf_trust")
+
+    def test_choose_safe_action_reverts_override_in_open_field_low_pressure(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_open_field_trust_food_pressure_max=0.35,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 300
+        ctrl._loop_escape_steps_left = 1
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, False]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.PPO),
+            patch.object(ctrl, "_evaluate_action", return_value=(100.0, True, 0)),
+            patch.object(ctrl, "_best_safe_action", return_value=2),
+        ):
+            action = ctrl._choose_safe_action(0)
+        self.assertEqual(int(action), 0)
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_open_field_trust")
 
 
 if __name__ == "__main__":

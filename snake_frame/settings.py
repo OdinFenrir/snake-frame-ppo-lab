@@ -19,6 +19,8 @@ class PpoConfig:
     ent_coef_start: float = 0.01
     ent_coef_end: float = 0.0008
     policy_net_arch: tuple[int, int] = (256, 256)
+    policy_net_arch_pi: tuple[int, ...] | None = None
+    policy_net_arch_vf: tuple[int, ...] | None = None
     seed: int | None = None
     eval_freq_steps: int = 200_000
     eval_episodes: int = 5
@@ -79,6 +81,9 @@ class DynamicControlConfig:
     ppo_confidence_trust_threshold: float = 0.82
     ppo_confidence_trust_food_pressure_max: float = 0.72
     ppo_confidence_trust_min_free_ratio: float = 0.24
+    ppo_confidence_trust_min_safe_options: int = 2
+    ppo_open_field_trust_food_pressure_max: float = 0.35
+    narrow_corridor_trigger_steps: int = 6
     dynamic_warmup_steps: int = 120
     enable_learned_arbiter: bool = True
     arbiter_threshold: float = 0.56
