@@ -112,6 +112,8 @@ Useful scripts:
 - `scripts/focused_controller_trace.py`
 - `scripts/post_run_suite.py`
 - `scripts/controller_candidate_gate.py`
+- `scripts/blind_spot_replay.py`
+- `scripts/blind_spot_replay_view.py`
 
 Controller suite contract (automatic):
 - `controller_on` summaries now emit:
@@ -126,6 +128,12 @@ Dashboard acceptance path:
 4. Smoke median perf gate
 5. Determinism drift check
 6. Controller candidate gate (hard fail on reject)
+
+Blind-spot replay one-shot (Windows):
+- `run_blind_spot_replay.bat`
+- Generates:
+  - `artifacts/live_eval/blind_spot_replay_latest.json`
+  - `artifacts/live_eval/blind_spot_replay_latest.html`
 
 ## Evaluation Protocol + Current Baseline
 

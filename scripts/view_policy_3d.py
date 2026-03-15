@@ -80,6 +80,28 @@ def _sample_indices(count: int, limit: int) -> np.ndarray:
     return np.linspace(0, count - 1, num=limit, dtype=np.int64)
 
 
+def _steps_until_terminal(
+    *,
+    episode_rows: list[int],
+    step_rows: list[int],
+    terminal_idx: list[int],
+) -> list[int]:
+    episode_terminal_step: dict[int, int] = {}
+    for idx in terminal_idx:
+        if idx < 0 or idx >= len(episode_rows) or idx >= len(step_rows):
+            continue
+        ep = int(episode_rows[idx])
+        step = int(step_rows[idx])
+        prev = episode_terminal_step.get(ep)
+        if prev is None or step > int(prev):
+            episode_terminal_step[ep] = int(step)
+    out: list[int] = []
+    for ep, step in zip(episode_rows, step_rows):
+        terminal_step = int(episode_terminal_step.get(int(ep), int(step)))
+        out.append(max(0, int(terminal_step - int(step))))
+    return out
+
+
 def build_view(
     *,
     model_path: Path,
@@ -166,6 +188,13 @@ def build_view(
     if not latent_rows:
         raise RuntimeError("No rollout data collected.")
 
+    survival_rows = _steps_until_terminal(
+        episode_rows=episode_rows,
+        step_rows=step_rows,
+        terminal_idx=terminal_idx,
+    )
+    near_death_rows = [1 if int(v) <= 10 else 0 for v in survival_rows]
+
     matrix = np.stack(latent_rows, axis=0)
     keep = _sample_indices(matrix.shape[0], max_points)
     points = _pca_3d(matrix[keep])
@@ -187,6 +216,8 @@ def build_view(
     ent_vals = [float(entropy_rows[i]) for i in keep.tolist()]
     safe_vals = [int(safe_count_rows[i]) for i in keep.tolist()]
     danger_vals = [float(danger_sum_rows[i]) for i in keep.tolist()]
+    survival_vals = [int(survival_rows[i]) for i in keep.tolist()]
+    near_death_vals = [int(near_death_rows[i]) for i in keep.tolist()]
 
     terminal_x = [float(points[i, 0]) for i in terminal_keep]
     terminal_y = [float(points[i, 1]) for i in terminal_keep]
@@ -196,6 +227,8 @@ def build_view(
     conf_arr = np.asarray(conf_rows, dtype=np.float64)
     ent_arr = np.asarray(entropy_rows, dtype=np.float64)
     danger_arr = np.asarray(danger_sum_rows, dtype=np.float64)
+    survival_arr = np.asarray(survival_rows, dtype=np.float64)
+    near_death_arr = np.asarray(near_death_rows, dtype=np.float64)
     action_arr = np.asarray(action_rows, dtype=np.int64)
     safe_arr = np.asarray(safe_count_rows, dtype=np.int64)
     reason_counts: dict[str, int] = {}
@@ -209,6 +242,17 @@ def build_view(
     ent_mean = float(ent_arr.mean()) if ent_arr.size else 0.0
     low_conf_rate = float((conf_arr < 0.45).mean()) if conf_arr.size else 0.0
     corr_danger_conf = float(np.corrcoef(danger_arr, conf_arr)[0, 1]) if conf_arr.size > 1 else 0.0
+    corr_conf_survival = float(np.corrcoef(conf_arr, survival_arr)[0, 1]) if conf_arr.size > 1 else 0.0
+    corr_conf_near_death = float(np.corrcoef(conf_arr, near_death_arr)[0, 1]) if conf_arr.size > 1 else 0.0
+    survival_mean = float(survival_arr.mean()) if survival_arr.size else 0.0
+    survival_p10 = float(np.percentile(survival_arr, 10)) if survival_arr.size else 0.0
+    near_death_rate = float(near_death_arr.mean()) if near_death_arr.size else 0.0
+    high_conf_cut = 0.7
+    high_conf_near_death_rate = (
+        float(((conf_arr >= high_conf_cut) & (near_death_arr >= 0.5)).mean())
+        if conf_arr.size
+        else 0.0
+    )
 
     payload = {
         "x": points[:, 0].astype(float).tolist(),
@@ -220,6 +264,8 @@ def build_view(
         "entropy": ent_vals,
         "safe": safe_vals,
         "danger": danger_vals,
+        "survival": survival_vals,
+        "near_death": near_death_vals,
         "terminal_x": terminal_x,
         "terminal_y": terminal_y,
         "terminal_z": terminal_z,
@@ -233,6 +279,13 @@ def build_view(
             "entropy_mean": ent_mean,
             "low_conf_rate": low_conf_rate,
             "corr_danger_conf": corr_danger_conf,
+            "corr_conf_survival": corr_conf_survival,
+            "corr_conf_near_death": corr_conf_near_death,
+            "survival_mean": survival_mean,
+            "survival_p10": survival_p10,
+            "near_death_rate": near_death_rate,
+            "high_conf_near_death_rate": high_conf_near_death_rate,
+            "high_conf_threshold": high_conf_cut,
             "action_counts": action_counts,
             "safe_counts": safe_counts,
             "terminal_reason_counts": reason_counts,
@@ -249,7 +302,9 @@ def build_view(
     html, body {{ width: 100%; height: 100%; margin: 0; background: #0d1117; color: #e6edf3; font-family: Segoe UI, Arial, sans-serif; }}
     #wrap {{ display: grid; grid-template-columns: minmax(280px, 320px) 1fr; width: 100%; height: 100%; }}
     #side {{ border-right: 1px solid #1f2a37; padding: 12px; overflow: auto; background: #0b1220; }}
+    #main {{ display: grid; grid-template-rows: 1fr minmax(220px, 34%); width: 100%; height: 100%; }}
     #plot {{ width: 100%; height: 100%; }}
+    #scatter {{ width: 100%; height: 100%; border-top: 1px solid #1f2a37; }}
     .k {{ color: #8fb3d9; }}
     .v {{ color: #f3f8ff; }}
     .blk {{ margin-bottom: 10px; }}
@@ -267,11 +322,25 @@ def build_view(
       <div class="blk"><span class="k">Mean entropy:</span> <span class="v" id="entropy_mean"></span></div>
       <div class="blk"><span class="k">Low-conf rate (&lt;0.45):</span> <span class="v" id="low_conf_rate"></span></div>
       <div class="blk"><span class="k">Corr(danger, conf):</span> <span class="v" id="corr_danger_conf"></span></div>
+      <div class="blk"><span class="k">Corr(conf, survival):</span> <span class="v" id="corr_conf_survival"></span></div>
+      <div class="blk"><span class="k">Corr(conf, near_death):</span> <span class="v" id="corr_conf_near_death"></span></div>
+      <div class="blk"><span class="k">Mean steps-to-death:</span> <span class="v" id="survival_mean"></span></div>
+      <div class="blk"><span class="k">P10 steps-to-death:</span> <span class="v" id="survival_p10"></span></div>
+      <div class="blk"><span class="k">Near-death rate (&le;10):</span> <span class="v" id="near_death_rate"></span></div>
+      <div class="blk"><span class="k">Blind spots (conf&ge;<span id="high_conf_threshold"></span> and death&le;10):</span> <span class="v" id="high_conf_near_death_rate"></span></div>
+      <div class="blk">
+        <span class="k">Legend:</span>
+        <div class="v">Survival colors: red = death soon, blue = long survival.</div>
+        <div class="v">Death&lt;=10 mode: red = near-terminal states, blue = not near-terminal.</div>
+      </div>
       <div class="blk"><span class="k">Action counts:</span> <span class="v" id="action_counts"></span></div>
       <div class="blk"><span class="k">Safe-action counts:</span> <span class="v" id="safe_counts"></span></div>
       <div class="blk"><span class="k">Terminal reasons:</span> <span class="v" id="terminal_reasons"></span></div>
     </div>
-    <div id="plot"></div>
+    <div id="main">
+      <div id="plot"></div>
+      <div id="scatter"></div>
+    </div>
   </div>
   <script>
     const d = {json.dumps(payload)};
@@ -322,6 +391,44 @@ def build_view(
       visible: false,
       name: 'action'
     }};
+    const traceSurvival = {{
+      type: 'scatter3d',
+      mode: 'markers',
+      x: d.x, y: d.y, z: d.z,
+      text: d.hover,
+      hovertemplate: '%{{text}} | steps_until_death=%{{marker.color}}<extra></extra>',
+      marker: {{
+        size: 3,
+        color: d.survival,
+        colorscale: [
+          [0.00, '#ef4444'],
+          [0.20, '#f59e0b'],
+          [0.40, '#fde047'],
+          [0.70, '#22c55e'],
+          [1.00, '#3b82f6']
+        ],
+        opacity: 0.82,
+        colorbar: {{ title: 'steps_until_death' }}
+      }},
+      visible: false,
+      name: 'survival'
+    }};
+    const traceNearDeath = {{
+      type: 'scatter3d',
+      mode: 'markers',
+      x: d.x, y: d.y, z: d.z,
+      text: d.hover,
+      hovertemplate: '%{{text}} | death<=10=%{{marker.color}}<extra></extra>',
+      marker: {{
+        size: 3,
+        color: d.near_death,
+        colorscale: [[0.0, '#2563eb'], [0.5, '#2563eb'], [0.5, '#ef4444'], [1.0, '#ef4444']],
+        opacity: 0.82,
+        colorbar: {{ title: 'death<=10' }}
+      }},
+      visible: false,
+      name: 'near_death'
+    }};
     const terminal = {{
       type: 'scatter3d',
       mode: 'markers',
@@ -348,13 +455,40 @@ def build_view(
         bgcolor: '#0f172a',
         bordercolor: '#334155',
         buttons: [
-          {{label: 'Color: Confidence', method: 'update', args: [{{visible: [true, false, false, true]}}]}},
-          {{label: 'Color: Entropy', method: 'update', args: [{{visible: [false, true, false, true]}}]}},
-          {{label: 'Color: Action', method: 'update', args: [{{visible: [false, false, true, true]}}]}}
+          {{label: 'Color: Confidence', method: 'update', args: [{{visible: [true, false, false, false, false, true]}}]}},
+          {{label: 'Color: Entropy', method: 'update', args: [{{visible: [false, true, false, false, false, true]}}]}},
+          {{label: 'Color: Action', method: 'update', args: [{{visible: [false, false, true, false, false, true]}}]}},
+          {{label: 'Color: Survival', method: 'update', args: [{{visible: [false, false, false, true, false, true]}}]}},
+          {{label: 'Color: Death<=10', method: 'update', args: [{{visible: [false, false, false, false, true, true]}}]}}
         ]
       }}]
     }};
-    Plotly.newPlot('plot', [traceConf, traceEntropy, traceAction, terminal], layout, {{responsive: true}});
+    Plotly.newPlot('plot', [traceConf, traceEntropy, traceAction, traceSurvival, traceNearDeath, terminal], layout, {{responsive: true}});
+
+    const scatter = {{
+      type: 'scattergl',
+      mode: 'markers',
+      x: d.conf,
+      y: d.survival,
+      text: d.hover,
+      hovertemplate: '%{{text}} | conf=%{{x:.3f}} steps_until_death=%{{y}}<extra></extra>',
+      marker: {{
+        size: 5,
+        color: d.near_death,
+        colorscale: [[0.0, '#2563eb'], [0.5, '#2563eb'], [0.5, '#ef4444'], [1.0, '#ef4444']],
+        opacity: 0.7,
+        line: {{ width: 0 }},
+      }}
+    }};
+    const scatterLayout = {{
+      title: {{ text: 'Confidence vs Steps-Until-Death', font: {{ color: '#e6edf3', size: 14 }} }},
+      paper_bgcolor: '#0d1117',
+      plot_bgcolor: '#0d1117',
+      xaxis: {{ title: 'confidence', color: '#9fb3c8', gridcolor: '#24364b', range: [0, 1] }},
+      yaxis: {{ title: 'steps_until_death', color: '#9fb3c8', gridcolor: '#24364b' }},
+      margin: {{ l: 54, r: 20, t: 40, b: 46 }},
+    }};
+    Plotly.newPlot('scatter', [scatter], scatterLayout, {{responsive: true}});
 
     const s = d.summary;
     const fmt = (n) => Number(n).toFixed(3);
@@ -365,6 +499,13 @@ def build_view(
     document.getElementById('entropy_mean').textContent = fmt(s.entropy_mean);
     document.getElementById('low_conf_rate').textContent = (100.0 * Number(s.low_conf_rate)).toFixed(1) + '%';
     document.getElementById('corr_danger_conf').textContent = fmt(s.corr_danger_conf);
+    document.getElementById('corr_conf_survival').textContent = fmt(s.corr_conf_survival);
+    document.getElementById('corr_conf_near_death').textContent = fmt(s.corr_conf_near_death);
+    document.getElementById('survival_mean').textContent = Number(s.survival_mean).toFixed(2);
+    document.getElementById('survival_p10').textContent = Number(s.survival_p10).toFixed(2);
+    document.getElementById('near_death_rate').textContent = (100.0 * Number(s.near_death_rate)).toFixed(1) + '%';
+    document.getElementById('high_conf_threshold').textContent = Number(s.high_conf_threshold).toFixed(2);
+    document.getElementById('high_conf_near_death_rate').textContent = (100.0 * Number(s.high_conf_near_death_rate)).toFixed(1) + '%';
     document.getElementById('action_counts').textContent = JSON.stringify(s.action_counts);
     document.getElementById('safe_counts').textContent = JSON.stringify(s.safe_counts);
     document.getElementById('terminal_reasons').textContent = JSON.stringify(s.terminal_reason_counts);

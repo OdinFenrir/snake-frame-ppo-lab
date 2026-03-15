@@ -340,6 +340,8 @@ class HoldoutEvalController:
                     break
                 score_before = int(getattr(game, "score", 0))
                 head_before = tuple(game.snake[0]) if game.snake else None
+                snake_before = [[int(pos[0]), int(pos[1])] for pos in list(game.snake)]
+                food_before = [int(game.food[0]), int(game.food[1])]
                 gameplay._apply_agent_control()  # keep controller logic in the eval loop
                 trace_row = gameplay.decision_trace_snapshot() if bool(trace_enabled) else None
                 game.update()
@@ -354,6 +356,10 @@ class HoldoutEvalController:
                             "ate_food": bool(int(getattr(game, "score", 0)) > int(score_before)),
                             "head_before": None if head_before is None else [int(head_before[0]), int(head_before[1])],
                             "head_after": None if not game.snake else [int(game.snake[0][0]), int(game.snake[0][1])],
+                            "snake_before": snake_before,
+                            "snake_after": [[int(pos[0]), int(pos[1])] for pos in list(game.snake)],
+                            "food_before": food_before,
+                            "food_after": [int(game.food[0]), int(game.food[1])],
                             "game_over": bool(game.game_over),
                             "death_reason": str(getattr(game, "death_reason", "none")),
                         }
