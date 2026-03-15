@@ -10,8 +10,6 @@ A research-oriented `pygame` Snake project with:
 
 ### Live Training UI
 
-> Add your screenshot at `docs/assets/live_training_ui.png` to render here.
-
 ![Snake Frame live training UI](docs/assets/live_training_ui.png)
 
 ## Highlights
