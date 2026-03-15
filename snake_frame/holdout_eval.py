@@ -320,6 +320,7 @@ class HoldoutEvalController:
                 space_strategy_enabled=True,
                 artifact_dir=Path(getattr(self.agent, "artifact_dir", self.out_dir)),
             )
+            gameplay.set_learning_enabled(False)
             if bool(trace_enabled):
                 gameplay.set_debug_options(debug_overlay=True, reachable_overlay=False)
             seed_trace_path = (trace_root / f"seed_{int(seed)}.jsonl") if trace_root is not None else None

@@ -722,6 +722,92 @@ class TestGameplayController(unittest.TestCase):
         self.assertEqual(int(action), 0)
         self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_open_field_trust")
 
+    def test_choose_safe_action_nonviable_single_safe_option_can_still_tolerate_low_risk(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 300
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, True, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.PPO),
+            patch.object(ctrl, "_evaluate_action", return_value=(100.0, True, 5)),
+            patch.object(ctrl, "_best_safe_action", return_value=2),
+        ):
+            action = ctrl._choose_safe_action(0)
+        self.assertEqual(int(action), 0)
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_tolerate_low_risk")
+
+    def test_choose_safe_action_viable_ppo_path_overwrites_stale_reason(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(agent_safety_override=True),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._dynamic.last_switch_reason = "ppo_conf_trust"
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 300
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, False]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.PPO),
+            patch.object(ctrl, "_evaluate_action", return_value=(100.0, True, 0)),
+        ):
+            action = ctrl._choose_safe_action(0)
+        self.assertEqual(int(action), 0)
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_mode_viable")
+
+    def test_choose_safe_action_high_conf_override_guard_prefers_ppo_without_safety_gain(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=0.97,
+                    ppo_high_conf_override_guard_min_shortfall_gain=2,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 300
+        ctrl._last_predicted_confidence = 0.99
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, False]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.ESCAPE),
+            patch.object(ctrl._escape_controller, "choose_action", return_value=2),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(90.0, True, 6), (91.0, True, 5)]),
+        ):
+            action = ctrl._choose_safe_action(0)
+        self.assertEqual(int(action), 0)
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_high_conf_guard")
+
 
 if __name__ == "__main__":
     unittest.main()

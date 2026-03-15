@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from snake_frame.holdout_eval import HoldoutEvalController
 from snake_frame.settings import ObsConfig, RewardConfig, Settings
@@ -122,6 +123,51 @@ class TestHoldoutEval(unittest.TestCase):
             self.assertIn("switch_reason", sample)
             self.assertIn("score_before", sample)
             self.assertIn("score_after", sample)
+
+    def test_controller_eval_disables_controller_learning(self) -> None:
+        class _FakeGameplayController:
+            instances: list["_FakeGameplayController"] = []
+
+            def __init__(self, *args, **kwargs) -> None:
+                _ = (args, kwargs)
+                self.learning_flags: list[bool] = []
+                _FakeGameplayController.instances.append(self)
+
+            def set_learning_enabled(self, enabled: bool) -> None:
+                self.learning_flags.append(bool(enabled))
+
+            def set_debug_options(self, *, debug_overlay: bool, reachable_overlay: bool) -> None:
+                _ = (debug_overlay, reachable_overlay)
+
+            def _apply_agent_control(self) -> None:
+                return
+
+            def decision_trace_snapshot(self):
+                return {"decision_index": 1, "mode": "ppo", "switch_reason": "none"}
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "snake_frame.holdout_eval.GameplayController",
+            _FakeGameplayController,
+        ):
+            ctl = HoldoutEvalController(
+                agent=_FakeAgent(),
+                settings=Settings(),
+                obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True),
+                reward_config=RewardConfig(),
+                out_dir=Path(tmpdir),
+            )
+            self.assertTrue(
+                ctl.start(
+                    mode=HoldoutEvalController.MODE_CONTROLLER_ON,
+                    seeds=[17001],
+                    max_steps=1,
+                    model_selector="best",
+                )
+            )
+            msg = self._wait(ctl)
+            self.assertIsNotNone(msg)
+            self.assertTrue(_FakeGameplayController.instances)
+            self.assertIn(False, _FakeGameplayController.instances[0].learning_flags)
 
     def test_training_active_does_not_start_or_reload_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

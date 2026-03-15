@@ -111,6 +111,33 @@ Useful scripts:
 - `scripts/focused_controller_trace.py`
 - `scripts/post_run_suite.py`
 
+## Evaluation Protocol + Current Baseline
+
+Reference date: **March 15, 2026**
+
+Protocol used for comparable controller-vs-PPO checks:
+1. Use fixed holdout seeds `17001-17030`.
+2. Run paired evaluation with the same model selector (`last`): `ppo_only` then `controller_on`.
+3. Keep controller learning disabled during holdout eval (prevents eval contamination/drift).
+4. Compare paired seed deltas (`controller - ppo`) and aggregate means.
+5. Re-check repeatability on worst-10 seeds from `artifacts/live_eval/worst10_latest.json`.
+
+Current validated baseline (fixed-seed paired run):
+- `ppo_only` mean: `142.6`
+- `controller_on` mean: `140.17`
+- mean delta (`controller - ppo`): `-2.43`
+- paired seeds: `30` (`17` worse, `13` improved, `0` equal)
+
+Worst-10 repeatability check (controller-on, same seeds run twice):
+- run 1 mean: `112.5`
+- run 2 mean: `112.5`
+- per-seed scores identical across both runs: `true`
+
+Supporting local artifacts (generated during validation, typically not committed):
+- `artifacts/live_eval/tmp_ablation/full30_guard099_trust090.json`
+- `artifacts/live_eval/tmp_ablation/worst10_ablation_combo.json`
+- `artifacts/live_eval/tmp_patch_suite/controller_repeatability_worst10.json`
+
 ## Validation Commands (Local)
 
 - Lint:

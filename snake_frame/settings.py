@@ -78,10 +78,14 @@ class DynamicControlConfig:
     loop_escape_cooldown_steps: int = 36
     loop_escape_starvation_trigger_ratio: float = 0.55
     loop_escape_stall_window: int = 32
-    ppo_confidence_trust_threshold: float = 0.82
+    ppo_confidence_trust_threshold: float = 0.90
     ppo_confidence_trust_food_pressure_max: float = 0.72
     ppo_confidence_trust_min_free_ratio: float = 0.24
     ppo_confidence_trust_min_safe_options: int = 2
+    ppo_high_conf_override_guard_threshold: float = 0.99
+    ppo_high_conf_override_guard_food_pressure_max: float = 0.6
+    ppo_high_conf_override_guard_min_safe_options: int = 2
+    ppo_high_conf_override_guard_min_shortfall_gain: int = 1
     ppo_open_field_trust_food_pressure_max: float = 0.35
     narrow_corridor_trigger_steps: int = 6
     dynamic_warmup_steps: int = 120

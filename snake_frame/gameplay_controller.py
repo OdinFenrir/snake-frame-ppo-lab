@@ -167,6 +167,7 @@ class GameplayController:
         self._arbiter_feature_dim = 8
         self._decision_contexts: deque[_DecisionContext] = deque(maxlen=192)
         self._last_decision_context: _DecisionContext | None = None
+        self._learning_enabled = True
         self._persist_learning = artifact_dir is not None
         self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else (Path(__file__).resolve().parents[1] / "state" / "ppo" / "v2")
         self._arbiter_path = self._artifact_dir / "arbiter_model.json"
@@ -212,6 +213,9 @@ class GameplayController:
     def set_debug_options(self, *, debug_overlay: bool, reachable_overlay: bool) -> None:
         self._debug_overlay_enabled = bool(debug_overlay)
         self._reachable_overlay_enabled = bool(reachable_overlay)
+
+    def set_learning_enabled(self, enabled: bool) -> None:
+        self._learning_enabled = bool(enabled)
 
     def step(self, game_running: bool) -> None:
         if not bool(game_running):
@@ -268,6 +272,8 @@ class GameplayController:
         ]
 
     def _reinforce_recent_contexts(self, *, success: bool, weight: float) -> None:
+        if not bool(self._learning_enabled):
+            return
         if not self._decision_contexts:
             return
         horizon = min(8, len(self._decision_contexts))
@@ -286,12 +292,16 @@ class GameplayController:
                 self._tactic_dirty = True
 
     def _maybe_persist_learning_state(self) -> None:
+        if not bool(self._learning_enabled):
+            return
         # Avoid synchronous writes each frame; persist every 128 decisions and at episode end.
         if int(self._decisions_total) <= 0 or (int(self._decisions_total) % 128) != 0:
             return
         self._persist_learning_state()
 
     def _persist_learning_state(self) -> None:
+        if not bool(self._learning_enabled):
+            return
         if not bool(self._persist_learning):
             return
         try:
@@ -609,6 +619,7 @@ class GameplayController:
             and int(self._loop_escape_steps_left) <= 0
             and not bool(narrow_corridor_risk)
         ):
+            self._dynamic.last_switch_reason = "ppo_mode_viable"
             self._last_chosen_tail_reachable = True
             self._last_capacity_shortfall = int(proposed_eval[2]) if proposed_eval is not None else 0
             return int(proposed_action)
@@ -709,6 +720,7 @@ class GameplayController:
             and not imminent_danger
             and proposed_eval is not None
             and chosen_eval is not None
+            and bool(self._learning_enabled)
             and bool(getattr(self._dynamic_cfg, "enable_learned_arbiter", False))
             and mode == ControlMode.PPO
             and effective_proposed_viable
@@ -742,6 +754,35 @@ class GameplayController:
         else:
             self._last_chosen_tail_reachable = True
             self._last_capacity_shortfall = 0
+        high_conf_guard_threshold = float(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_threshold", 0.97))
+        high_conf_guard_pressure_max = float(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_food_pressure_max", 0.6))
+        high_conf_guard_min_safe_options = max(1, int(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_min_safe_options", 2)))
+        high_conf_guard_min_shortfall_gain = max(0, int(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_min_shortfall_gain", 2)))
+        high_conf_override_guard = bool(
+            int(action) != int(proposed_action)
+            and not bool(imminent_danger)
+            and proposed_eval is not None
+            and chosen_eval is not None
+            and self._last_predicted_confidence is not None
+            and float(self._last_predicted_confidence) >= float(high_conf_guard_threshold)
+            and float(food_pressure) <= float(high_conf_guard_pressure_max)
+            and int(safe_option_count) >= int(high_conf_guard_min_safe_options)
+        )
+        if high_conf_override_guard:
+            chosen_tail_ok = bool(chosen_eval[1])
+            chosen_shortfall = int(chosen_eval[2])
+            proposed_tail_ok = bool(proposed_eval[1])
+            proposed_shortfall = int(proposed_eval[2])
+            safety_gain = bool(
+                (not proposed_tail_ok and chosen_tail_ok)
+                or (int(proposed_shortfall - chosen_shortfall) >= int(high_conf_guard_min_shortfall_gain))
+            )
+            if not bool(safety_gain):
+                action = int(proposed_action)
+                chosen_eval = proposed_eval
+                self._last_chosen_tail_reachable = bool(proposed_tail_ok)
+                self._last_capacity_shortfall = int(proposed_shortfall)
+                self._dynamic.last_switch_reason = "ppo_high_conf_guard"
         decision_features = self._decision_features(
             free_ratio=free_ratio,
             food_pressure=food_pressure,
