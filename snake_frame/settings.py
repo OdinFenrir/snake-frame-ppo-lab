@@ -86,6 +86,15 @@ class DynamicControlConfig:
     ppo_high_conf_override_guard_food_pressure_max: float = 0.6
     ppo_high_conf_override_guard_min_safe_options: int = 2
     ppo_high_conf_override_guard_min_shortfall_gain: int = 1
+    enable_risk_switch_guard: bool = False
+    risk_switch_guard_confidence_min: float = 0.90
+    risk_switch_guard_min_safe_options: int = 1
+    risk_switch_guard_min_shortfall_gain: int = 2
+    risk_switch_guard_no_progress_margin: int = 20
+    risk_switch_guard_allow_narrow_corridor: bool = False
+    risk_switch_guard_narrow_confidence_min: float = 0.97
+    risk_switch_guard_narrow_min_no_progress_steps: int = 16
+    risk_switch_guard_narrow_no_progress_margin: int = 0
     enable_pocket_exit_guard: bool = False
     pocket_exit_guard_max_safe_options: int = 2
     pocket_exit_guard_min_no_progress_steps: int = 32

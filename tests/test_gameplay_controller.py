@@ -220,10 +220,14 @@ class TestGameplayController(unittest.TestCase):
             "proposed_viable",
             "chosen_tail_reachable",
             "chosen_capacity_shortfall",
+            "risk_guard_candidate",
+            "risk_guard_eligible",
+            "risk_guard_blockers",
             "interventions_total",
             "pocket_risk_total",
         }
         self.assertTrue(required.issubset(set(row.keys())))
+        self.assertIsInstance(row.get("risk_guard_blockers"), list)
 
     def test_telemetry_tracks_starvation_death_reason(self) -> None:
         game = _FakeGame()
@@ -872,6 +876,262 @@ class TestGameplayController(unittest.TestCase):
             action = ctrl._choose_safe_action(0)
         self.assertEqual(int(action), 0)
         self.assertEqual(str(ctrl.last_mode_switch_reason()), "ppo_high_conf_guard")
+
+    def test_risk_switch_guard_downgrades_no_progress_risk_when_no_safety_gain(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=1.1,
+                    enable_risk_switch_guard=True,
+                    risk_switch_guard_confidence_min=0.9,
+                    risk_switch_guard_min_safe_options=2,
+                    risk_switch_guard_min_shortfall_gain=2,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 220
+        ctrl._last_predicted_confidence = 0.99
+
+        captured: dict[str, object] = {}
+
+        def _capture_mode(**kwargs):
+            captured.update(kwargs)
+            return ControlMode.PPO
+
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=True),
+            patch.object(ctrl, "_is_eval_viable", return_value=False),
+            patch.object(ctrl, "_best_safe_action", return_value=1),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(100.0, True, 6), (99.0, True, 5), (99.0, True, 5)]),
+            patch.object(ctrl, "_select_mode", side_effect=_capture_mode),
+        ):
+            _ = ctrl._choose_safe_action(0)
+        self.assertFalse(bool(captured.get("significant_risk", True)))
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "risk_guard_hold")
+
+    def test_risk_switch_guard_keeps_risk_when_alt_has_measured_safety_gain(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=1.1,
+                    enable_risk_switch_guard=True,
+                    risk_switch_guard_confidence_min=0.9,
+                    risk_switch_guard_min_safe_options=2,
+                    risk_switch_guard_min_shortfall_gain=2,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 220
+        ctrl._last_predicted_confidence = 0.99
+
+        captured: dict[str, object] = {}
+
+        def _capture_mode(**kwargs):
+            captured.update(kwargs)
+            return ControlMode.ESCAPE
+
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=True),
+            patch.object(ctrl, "_is_eval_viable", return_value=False),
+            patch.object(ctrl, "_best_safe_action", return_value=1),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(100.0, True, 6), (101.0, True, 3), (101.0, True, 3)]),
+            patch.object(ctrl, "_select_mode", side_effect=_capture_mode),
+            patch.object(ctrl._escape_controller, "choose_action", return_value=1),
+        ):
+            _ = ctrl._choose_safe_action(0)
+        self.assertTrue(bool(captured.get("significant_risk", False)))
+
+    def test_risk_guard_diagnostics_reports_disabled_blocker_for_significant_risk(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=1.1,
+                    enable_risk_switch_guard=False,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 220
+        ctrl._last_predicted_confidence = 0.99
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, False, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=True),
+            patch.object(ctrl, "_is_eval_viable", return_value=False),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(100.0, True, 6), (99.0, True, 5)]),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.ESCAPE),
+            patch.object(ctrl._escape_controller, "choose_action", return_value=1),
+        ):
+            _ = ctrl._choose_safe_action(0)
+        row = ctrl.decision_trace_snapshot()
+        self.assertTrue(bool(row.get("risk_guard_candidate")))
+        self.assertFalse(bool(row.get("risk_guard_eligible")))
+        self.assertIn("guard_disabled", list(row.get("risk_guard_blockers", [])))
+
+    def test_risk_guard_diagnostics_reports_narrow_corridor_blocker_when_not_allowed(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=1.1,
+                    enable_risk_switch_guard=True,
+                    risk_switch_guard_allow_narrow_corridor=False,
+                    narrow_corridor_trigger_steps=1,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 280
+        ctrl._last_predicted_confidence = 0.99
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, True, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_is_eval_viable", return_value=False),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(100.0, True, 6), (99.0, True, 5)]),
+            patch.object(ctrl, "_select_mode", return_value=ControlMode.ESCAPE),
+            patch.object(ctrl._escape_controller, "choose_action", return_value=0),
+        ):
+            _ = ctrl._choose_safe_action(0)
+        row = ctrl.decision_trace_snapshot()
+        self.assertTrue(bool(row.get("risk_guard_candidate")))
+        self.assertFalse(bool(row.get("risk_guard_eligible")))
+        self.assertIn("narrow_corridor", list(row.get("risk_guard_blockers", [])))
+
+    def test_risk_switch_guard_allows_narrow_corridor_when_flagged(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        agent.is_ready = True
+        agent.is_inference_available = True
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(
+                agent_safety_override=True,
+                dynamic_control=DynamicControlConfig(
+                    enable_learned_arbiter=False,
+                    ppo_confidence_trust_threshold=1.1,
+                    ppo_high_conf_override_guard_threshold=1.1,
+                    enable_risk_switch_guard=True,
+                    risk_switch_guard_allow_narrow_corridor=True,
+                    risk_switch_guard_narrow_confidence_min=0.95,
+                    risk_switch_guard_narrow_min_no_progress_steps=12,
+                    risk_switch_guard_narrow_no_progress_margin=30,
+                    narrow_corridor_trigger_steps=1,
+                    risk_switch_guard_min_safe_options=1,
+                ),
+            ),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._decisions_total = 300
+        ctrl._dynamic.last_food_step = 280
+        ctrl._last_predicted_confidence = 0.99
+        captured: dict[str, object] = {}
+
+        def _capture_mode(**kwargs):
+            captured.update(kwargs)
+            return ControlMode.PPO
+
+        with (
+            patch("snake_frame.gameplay_controller.is_danger", side_effect=[False, True, True]),
+            patch.object(ctrl, "_register_cycle_state", return_value=False),
+            patch.object(ctrl, "_is_eval_viable", return_value=False),
+            patch.object(ctrl, "_best_safe_action", return_value=0),
+            patch.object(ctrl, "_evaluate_action", side_effect=[(100.0, True, 6), (100.0, True, 6)]),
+            patch.object(ctrl, "_select_mode", side_effect=_capture_mode),
+        ):
+            _ = ctrl._choose_safe_action(0)
+        self.assertFalse(bool(captured.get("significant_risk", True)))
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "risk_guard_hold")
+        row = ctrl.decision_trace_snapshot()
+        self.assertTrue(bool(row.get("risk_guard_eligible")))
+        self.assertNotIn("narrow_corridor", list(row.get("risk_guard_blockers", [])))
+
+    def test_select_mode_holds_escape_on_no_progress_in_narrow_corridor_when_tail_reachable(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._dynamic.current_mode = ControlMode.ESCAPE
+        ctrl._decisions_total = 300
+        mode = ctrl._select_mode(
+            significant_risk=True,
+            imminent_danger=False,
+            cycle_repeat=False,
+            no_progress_steps=int(ctrl._dynamic_cfg.no_progress_steps_escape),
+            safe_option_count=1,
+            proposed_tail_reachable=True,
+            proposed_capacity_shortfall=0,
+        )
+        self.assertEqual(mode, ControlMode.ESCAPE)
+
+    def test_select_mode_uses_space_fill_on_no_progress_when_not_narrow_corridor(self) -> None:
+        game = _FakeGame()
+        agent = _FakeAgent()
+        ctrl = GameplayController(
+            game=game,
+            agent=agent,
+            settings=Settings(),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True),
+        )
+        ctrl._dynamic.current_mode = ControlMode.ESCAPE
+        ctrl._decisions_total = 300
+        mode = ctrl._select_mode(
+            significant_risk=True,
+            imminent_danger=False,
+            cycle_repeat=False,
+            no_progress_steps=int(ctrl._dynamic_cfg.no_progress_steps_escape),
+            safe_option_count=2,
+            proposed_tail_reachable=True,
+            proposed_capacity_shortfall=0,
+        )
+        self.assertEqual(mode, ControlMode.SPACE_FILL)
+        self.assertEqual(str(ctrl.last_mode_switch_reason()), "no_progress_escape")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -27,6 +28,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--worst-json", type=str, default="artifacts/live_eval/worst10_latest.json")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--trace-tag", type=str, default="worst10")
+    parser.add_argument("--enable-risk-switch-guard", action="store_true")
+    parser.add_argument("--risk-guard-allow-narrow-corridor", action="store_true")
+    parser.add_argument("--risk-guard-narrow-min-no-progress-steps", type=int, default=16)
+    parser.add_argument("--risk-guard-narrow-confidence-min", type=float, default=0.97)
+    parser.add_argument("--risk-guard-narrow-no-progress-margin", type=int, default=0)
     return parser.parse_args(argv)
 
 
@@ -61,6 +67,15 @@ def main() -> None:
         raise SystemExit("No seeds provided (use --seeds or a valid --worst-json).")
 
     settings = Settings()
+    if bool(args.enable_risk_switch_guard) or bool(args.risk_guard_allow_narrow_corridor):
+        settings.dynamic_control = replace(
+            settings.dynamic_control,
+            enable_risk_switch_guard=bool(args.enable_risk_switch_guard),
+            risk_switch_guard_allow_narrow_corridor=bool(args.risk_guard_allow_narrow_corridor),
+            risk_switch_guard_narrow_min_no_progress_steps=max(0, int(args.risk_guard_narrow_min_no_progress_steps)),
+            risk_switch_guard_narrow_confidence_min=float(args.risk_guard_narrow_confidence_min),
+            risk_switch_guard_narrow_no_progress_margin=max(0, int(args.risk_guard_narrow_no_progress_margin)),
+        )
     pygame.init()
     try:
         pygame.display.set_mode((1, 1))

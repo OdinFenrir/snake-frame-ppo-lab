@@ -160,6 +160,9 @@ class GameplayController:
         self._last_cycle_repeat = False
         self._last_imminent_danger = False
         self._last_proposed_viable = False
+        self._last_risk_guard_candidate = False
+        self._last_risk_guard_eligible = False
+        self._last_risk_guard_blockers: tuple[str, ...] = ()
         self._space_strategy_enabled = bool(space_strategy_enabled)
         self._escape_controller = EscapeController()
         self._space_fill_controller = SpaceFillController()
@@ -493,6 +496,9 @@ class GameplayController:
         if not self.settings.agent_safety_override:
             self._decision_mode_now = ControlMode.PPO
             return int(proposed_action)
+        self._last_risk_guard_candidate = False
+        self._last_risk_guard_eligible = False
+        self._last_risk_guard_blockers = ()
 
         if not bool(self._dynamic_cfg.enable_dynamic_control):
             action = self._legacy_safe_action(
@@ -664,11 +670,135 @@ class GameplayController:
         significant_risk = bool((not bool(effective_proposed_viable)) and risk_override_trigger)
         if bool(narrow_corridor_risk):
             significant_risk = True
+        self._last_risk_guard_candidate = bool(significant_risk)
+        risk_guard_blockers: list[str] = []
+        risk_guard_eligible = False
+        risk_guard_enabled = bool(getattr(self._dynamic_cfg, "enable_risk_switch_guard", False))
+        allow_narrow_corridor_guard = bool(getattr(self._dynamic_cfg, "risk_switch_guard_allow_narrow_corridor", False))
+        narrow_guard_active = bool(narrow_corridor_risk) and bool(allow_narrow_corridor_guard)
+        risk_guard_no_progress_floor = int(self._dynamic_cfg.no_progress_steps_escape)
+        if bool(narrow_guard_active):
+            risk_guard_no_progress_floor = max(
+                0,
+                int(getattr(self._dynamic_cfg, "risk_switch_guard_narrow_min_no_progress_steps", 16)),
+            )
+        if not bool(significant_risk):
+            risk_guard_blockers.append("not_significant_risk")
+        else:
+            if bool(imminent_danger):
+                risk_guard_blockers.append("imminent_danger")
+            if proposed_eval is None:
+                risk_guard_blockers.append("proposed_eval_unavailable")
+            if int(no_progress_steps) < int(risk_guard_no_progress_floor):
+                if bool(narrow_guard_active):
+                    risk_guard_blockers.append("no_progress_below_narrow_floor")
+                else:
+                    risk_guard_blockers.append("no_progress_below_escape")
+            if float(food_pressure) >= float(self._FOOD_PRESSURE_TRIGGER):
+                risk_guard_blockers.append("food_pressure_high")
+            if bool(narrow_corridor_risk) and not bool(allow_narrow_corridor_guard):
+                risk_guard_blockers.append("narrow_corridor")
+            if self._last_predicted_confidence is None:
+                risk_guard_blockers.append("confidence_missing")
+            if not bool(risk_guard_enabled):
+                risk_guard_blockers.append("guard_disabled")
+            if not risk_guard_blockers:
+                conf_min = float(getattr(self._dynamic_cfg, "risk_switch_guard_confidence_min", 0.95))
+                if bool(narrow_guard_active):
+                    conf_min = max(
+                        float(conf_min),
+                        float(getattr(self._dynamic_cfg, "risk_switch_guard_narrow_confidence_min", conf_min)),
+                    )
+                min_safe_options = max(1, int(getattr(self._dynamic_cfg, "risk_switch_guard_min_safe_options", 2)))
+                no_progress_margin = max(1, int(getattr(self._dynamic_cfg, "risk_switch_guard_no_progress_margin", 20)))
+                if bool(narrow_guard_active):
+                    no_progress_margin = max(
+                        0,
+                        int(getattr(self._dynamic_cfg, "risk_switch_guard_narrow_no_progress_margin", 0)),
+                    )
+                if float(self._last_predicted_confidence) < float(conf_min):
+                    risk_guard_blockers.append("confidence_too_low")
+                if int(safe_option_count) < int(min_safe_options):
+                    risk_guard_blockers.append("safe_options_below_threshold")
+                if int(no_progress_steps) > int(risk_guard_no_progress_floor) + int(no_progress_margin):
+                    risk_guard_blockers.append("no_progress_margin_failed")
+                if not risk_guard_blockers:
+                    risk_guard_eligible = True
+        self._last_risk_guard_eligible = bool(risk_guard_eligible)
+        self._last_risk_guard_blockers = tuple(risk_guard_blockers)
+        # Narrow risk-switch guard (feature-flagged): in cycle-only risk transitions,
+        # keep PPO mode when no measured safety gain is available from a safe fallback.
+        if (
+            bool(significant_risk)
+            and bool(risk_guard_enabled)
+            and not bool(imminent_danger)
+            and proposed_eval is not None
+            and int(no_progress_steps) >= int(risk_guard_no_progress_floor)
+            and float(food_pressure) < float(self._FOOD_PRESSURE_TRIGGER)
+            and (not bool(narrow_corridor_risk) or bool(allow_narrow_corridor_guard))
+            and self._last_predicted_confidence is not None
+        ):
+            conf_min = float(getattr(self._dynamic_cfg, "risk_switch_guard_confidence_min", 0.95))
+            if bool(narrow_guard_active):
+                conf_min = max(
+                    float(conf_min),
+                    float(getattr(self._dynamic_cfg, "risk_switch_guard_narrow_confidence_min", conf_min)),
+                )
+            min_safe_options = max(1, int(getattr(self._dynamic_cfg, "risk_switch_guard_min_safe_options", 2)))
+            min_shortfall_gain = max(1, int(getattr(self._dynamic_cfg, "risk_switch_guard_min_shortfall_gain", 2)))
+            no_progress_margin = max(1, int(getattr(self._dynamic_cfg, "risk_switch_guard_no_progress_margin", 20)))
+            if bool(narrow_guard_active):
+                no_progress_margin = max(
+                    0,
+                    int(getattr(self._dynamic_cfg, "risk_switch_guard_narrow_no_progress_margin", 0)),
+                )
+            if (
+                float(self._last_predicted_confidence) >= float(conf_min)
+                and int(safe_option_count) >= int(min_safe_options)
+                and int(no_progress_steps) <= int(risk_guard_no_progress_floor) + int(no_progress_margin)
+            ):
+                alt_action = self._best_safe_action(
+                    proposed_action=int(proposed_action),
+                    board_cells=board_cells,
+                    snake=snake,
+                    direction=direction,
+                    food=food,
+                    food_weight=food_weight,
+                    capacity_penalty_scale=capacity_penalty_scale,
+                )
+                if int(alt_action) == int(proposed_action):
+                    significant_risk = False
+                    self._dynamic.last_switch_reason = "risk_guard_hold"
+                else:
+                    alt_eval = self._evaluate_action(
+                        board_cells=board_cells,
+                        snake=snake,
+                        direction=direction,
+                        food=food,
+                        action=int(alt_action),
+                        food_weight=food_weight,
+                        capacity_penalty_scale=capacity_penalty_scale,
+                    )
+                    if alt_eval is not None:
+                        proposed_tail_ok = bool(proposed_eval[1])
+                        proposed_shortfall = int(proposed_eval[2])
+                        alt_tail_ok = bool(alt_eval[1])
+                        alt_shortfall = int(alt_eval[2])
+                        safety_gain = bool(
+                            (not proposed_tail_ok and alt_tail_ok)
+                            or (int(proposed_shortfall - alt_shortfall) >= int(min_shortfall_gain))
+                        )
+                        if not bool(safety_gain):
+                            significant_risk = False
+                            self._dynamic.last_switch_reason = "risk_guard_hold"
         mode = self._select_mode(
             significant_risk=significant_risk,
             imminent_danger=imminent_danger,
             cycle_repeat=cycle_repeat,
             no_progress_steps=no_progress_steps,
+            safe_option_count=int(safe_option_count),
+            proposed_tail_reachable=bool(proposed_eval[1]) if proposed_eval is not None else False,
+            proposed_capacity_shortfall=int(proposed_eval[2]) if proposed_eval is not None else 0,
         )
         self._decision_mode_now = mode
         warmup_steps = max(0, int(getattr(self._dynamic_cfg, "dynamic_warmup_steps", 0)))
@@ -1174,6 +1304,9 @@ class GameplayController:
         imminent_danger: bool,
         cycle_repeat: bool,
         no_progress_steps: int,
+        safe_option_count: int,
+        proposed_tail_reachable: bool,
+        proposed_capacity_shortfall: int,
     ) -> ControlMode:
         current = self._dynamic.current_mode
         desired = current
@@ -1191,8 +1324,18 @@ class GameplayController:
                 desired = ControlMode.SPACE_FILL
                 reason = "cycle_repeat"
             elif no_progress_steps >= int(self._dynamic_cfg.no_progress_steps_escape):
-                desired = ControlMode.SPACE_FILL
-                reason = "no_progress_escape"
+                # In narrow corridors with a tail-reachable path and no pocket shortfall,
+                # keep ESCAPE instead of forcing an early SPACE_FILL transition.
+                if (
+                    int(safe_option_count) <= 1
+                    and bool(proposed_tail_reachable)
+                    and int(proposed_capacity_shortfall) <= 0
+                ):
+                    desired = ControlMode.ESCAPE
+                    reason = "escape_hold_narrow_corridor"
+                else:
+                    desired = ControlMode.SPACE_FILL
+                    reason = "no_progress_escape"
             elif not significant_risk and no_progress_steps <= int(self._dynamic_cfg.risk_recovery_window):
                 desired = ControlMode.PPO
                 reason = "risk_cleared"
@@ -1555,6 +1698,9 @@ class GameplayController:
             "proposed_capacity_shortfall": int(self._last_proposed_capacity_shortfall),
             "chosen_tail_reachable": bool(self._last_chosen_tail_reachable),
             "chosen_capacity_shortfall": int(self._last_capacity_shortfall),
+            "risk_guard_candidate": bool(self._last_risk_guard_candidate),
+            "risk_guard_eligible": bool(self._last_risk_guard_eligible),
+            "risk_guard_blockers": [str(v) for v in self._last_risk_guard_blockers],
             "no_progress_steps": int(no_progress_steps),
             "starvation_steps": int(starvation_steps),
             "starvation_limit": int(starvation_limit),
