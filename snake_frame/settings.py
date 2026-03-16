@@ -73,6 +73,7 @@ class DynamicControlConfig:
     space_fill_wall_distance_weight: float = 3.0
     space_fill_food_distance_weight: float = 0.02
     space_fill_zigzag_penalty: float = 8.0
+    space_fill_low_liberty_penalty: float = 200.0
     loop_escape_base_steps: int = 10
     loop_escape_max_steps: int = 36
     loop_escape_cooldown_steps: int = 36
