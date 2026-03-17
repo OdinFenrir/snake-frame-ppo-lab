@@ -23,6 +23,7 @@ class AppRuntime:
     agent: AgentLike
     training: TrainingLike
     panel_renderer: SidePanelsRenderer
+    experiment_name: str = "v2"
 
 
 def build_runtime(
@@ -38,6 +39,7 @@ def build_runtime(
     reward_config: RewardConfig | None = None,
     obs_config: ObsConfig | None = None,
     state_dir: Path | None = None,
+    experiment_name: str = "v2",
 ) -> AppRuntime:
     if agent_cls is None:
         from .ppo_agent import PpoSnakeAgent as agent_cls
@@ -51,7 +53,7 @@ def build_runtime(
     game = SnakeGame(settings, starvation_factor=int(reward_config.board_starvation_factor))
     state_dir = state_dir or _resolve_state_dir()
     state_file = state_dir / "ui_state.json"
-    artifact_dir = state_dir / "ppo" / "v2"
+    artifact_dir = state_dir / "ppo" / experiment_name
     legacy_model_file = state_dir / "ppo_snake_model.zip"
     obs_config = obs_config or ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True, use_tail_trend_features=True)
     agent = agent_cls(
@@ -77,6 +79,7 @@ def build_runtime(
         agent=agent,
         training=training,
         panel_renderer=panel_renderer,
+        experiment_name=experiment_name,
     )
 
 

@@ -113,7 +113,7 @@ class SnakeFrameApp:
             settings=self.settings,
             obs_config=self.obs_config,
             space_strategy_enabled=self.app_state.space_strategy_enabled,
-            artifact_dir=runtime.state_file.parent / "ppo" / "v2",
+            artifact_dir=runtime.state_file.parent / "ppo" / runtime.experiment_name,
         )
         self._build_controls()
         self.actions = AppActions(
