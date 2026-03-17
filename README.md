@@ -27,7 +27,7 @@ Phase 3:
 
 ![Snake Frame live training UI phase 3](docs/assets/live_training_ui_phase3.png)
 
-## Project Resume
+## Project Overview
 
 This project is a full training + evaluation environment for reinforcement learning experiments on Snake:
 
@@ -248,7 +248,7 @@ Supporting local artifacts (generated during validation, typically not committed
 
 ## CI / Automation
 
-GitHub Actions runs fast validation on every push/PR:
+GitHub Actions workflow definitions are in place for fast validation on push/PR. Full validation runs locally:
 - Linting (ruff)
 - Unit and integration tests
 - Render regression checks
