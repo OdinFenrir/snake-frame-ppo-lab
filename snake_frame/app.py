@@ -175,6 +175,10 @@ class SnakeFrameApp:
         self.graph_rect = pygame.Rect(controls.graph_rect)
         self.training_graph_rect = pygame.Rect(controls.training_graph_rect)
         self.run_graph_rect = pygame.Rect(controls.run_graph_rect)
+        self.training_header_y = controls.training_header_y
+        self.training_badges_y = controls.training_badges_y
+        self.run_header_y = controls.run_header_y
+        self.run_badges_y = controls.run_badges_y
         self.panel_controls: PanelControls = controls.panel_controls
         self.generations_input: NumericInput = controls.generations_input
         self.btn_train_start: Button = controls.btn_train_start

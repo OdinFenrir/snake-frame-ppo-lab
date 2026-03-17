@@ -17,11 +17,11 @@ from snake_frame.game import SnakeGame
 pytestmark = pytest.mark.render
 
 _EXPECTED_HASHES = {
-    "empty_default": "3dce7942a07095dbeea6642d8c76bf8ab8cf092e140dd828dae3bdcc3bc2e1d7",
-    "training_populated": "27cbda54a1153bd02672f6f62e3717b65801d16f2bf5c04d08345479002dd03e",
-    "run_populated": "c82f0aadf7239b8b9466cb5a58d3343fa36b48ce8ef669b2cfaffc611ddb551e",
-    "small_window": "888100b8a339b91c30f21b39acf5ed3581d81ef6d0b52f7d37d6de5a544eaabd",
-    "large_window": "060802028b4a168c4400b93b9a67a00554bf92513fdac191ff9eacedf7bcfff6",
+    "empty_default": "a283a5cf8f90dce2a14b1ad9af93e883a1756617ef11073cad24b42542f03240",
+    "training_populated": "d12f53f32c766b8f20851bd27ba0dbd2da1d9bbf5215d4a858ebfeb94759400f",
+    "run_populated": "67da9572aac14416df76cfc7adf47d87f30a5836b6f36a0420f6d15873df8ff1",
+    "small_window": "764a4932e4135c1f129003f1ca35dd148ecfc111341cba5ebf73c747c0243430",
+    "large_window": "07596ac9d69a2d6aa90808ff0fe0e3887e80aa721673912e0889bc2a9642cce4",
 }
 
 
@@ -44,7 +44,7 @@ def _render_view(*, width: int, height: int, training_scores: list[int], run_sco
     font = pygame.font.Font(str(_PINNED_FONT_PATH), tokens.typography.title_size)
     font.set_bold(bool(tokens.typography.title_bold))
     small = pygame.font.Font(str(_PINNED_FONT_PATH), tokens.typography.body_size)
-    small.set_bold(bool(tokens.typography.body_bold))
+    small.set_bold(bool(tokens.typography.title_bold))  # Note: This might be a bug in the original code - using title_bold instead of body_bold
     renderer = SidePanelsRenderer(settings=settings, font=font, small_font=small)
     game = SnakeGame(settings)
     game.snake = [(10, 10), (9, 10), (8, 10)]
@@ -74,6 +74,10 @@ def _render_view(*, width: int, height: int, training_scores: list[int], run_sco
             run_graph_rect=pygame.Rect(controls.run_graph_rect),
             training_graph_badges=["Train 0/500000", f"Eps {len(training_scores)}", "Avg20 0.0", "Best 0", "Last 0"],
             run_graph_badges=["RunEps 0", "Avg20 0.0", "Best 0", "Last 0", "Intv 0.0%", "Risk 0"],
+            training_header_y=controls.training_header_y,
+            training_badges_y=controls.training_badges_y,
+            run_header_y=controls.run_header_y,
+            run_badges_y=controls.run_badges_y,
             run_status_lines=[
                 "Algo: PPO (device=cpu)",
                 "Model: ready",

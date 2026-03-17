@@ -151,8 +151,8 @@ class Settings:
             self.window_height_px = int(self.window_px)
 
     def apply_window_size(self, width: int, height: int) -> None:
-        target_w = max(1280, int(width))
-        target_h = max(720, int(height))
+        target_w = max(1024, int(width))
+        target_h = max(600, int(height))
         board_max_by_height = target_h
         board_max_by_width = target_w - int(self.min_left_panel_px) - int(self.min_right_panel_px)
         board_px = max(
