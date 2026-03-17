@@ -5,16 +5,13 @@ on:
     branches:
       - "**"
   pull_request:
-  schedule:
-    - cron: "0 6 1 */3 *"
 
 jobs:
-  test-windows:
-    if: ${{ false }}
+  lint-and-test:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,28 +33,6 @@ jobs:
           python -m pip install -r requirements-lock.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Smoke Run
-        shell: pwsh
-        run: python -c "import pygame, numpy, gymnasium, stable_baselines3, torch; print('deps ok')"
-
-      - name: E2E Headless Smoke + Perf Budgets (Median of 3)
-        shell: pwsh
-        run: |
-          python scripts/smoke_gate_median.py `
-            --runs 3 `
-            --train-steps 2048 `
-            --game-steps 300 `
-            --metrics-out artifacts/smoke_metrics.json `
-            --max-frame-p95-ms 40 `
-            --max-frame-avg-ms 34 `
-            --max-frame-jitter-ms 8 `
-            --max-inference-p95-ms 12 `
-            --min-training-steps-per-sec 250
-
-      - name: Deterministic Drift Check
-        shell: pwsh
-        run: python scripts/validate_determinism.py --baseline tests/baselines/deterministic_windows.json --seed 1337 --train-steps 2048 --game-steps 300
-
       - name: Lint
         shell: pwsh
         run: python -m ruff check snake_frame tests main.py
@@ -69,10 +44,3 @@ jobs:
       - name: Render Regression
         shell: pwsh
         run: python -m pytest -q -m render
-
-      - name: Upload Smoke Metrics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-metrics-py${{ matrix.python-version }}
-          path: artifacts/smoke_metrics.json

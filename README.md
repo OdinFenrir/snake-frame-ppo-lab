@@ -203,13 +203,14 @@ Supporting local artifacts (generated during validation, typically not committed
 
 ## CI / Automation
 
-Workflow definitions exist in `.github/workflows/` for:
-- Linting
-- Test execution
+GitHub Actions runs fast validation on every push/PR:
+- Linting (ruff)
+- Unit and integration tests
 - Render regression checks
-- Smoke performance gates
 
-Validation is run locally (ML training/evaluation requires GPU and long runtimes not suited for hosted CI). Full validation commands are documented above.
+Full ML training/evaluation gates remain local because they are runtime-heavy and hardware-sensitive (CPU-based training, long runtimes, timing-sensitive smoke gates).
+
+Local validation commands are documented above.
 
 ## Project Structure
 
