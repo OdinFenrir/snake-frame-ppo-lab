@@ -57,6 +57,8 @@ At each game decision:
 
 ### Decision Stack
 
+<center>
+
 ```
                          GAME STATE
               (snake body, head, food, grid)
@@ -91,6 +93,8 @@ At each game decision:
                             v
                      FINAL ACTION
 ```
+
+</center>
 
 ### Controller Modes
 
