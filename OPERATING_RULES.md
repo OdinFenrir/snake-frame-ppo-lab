@@ -6,6 +6,11 @@
 - **New experiments**: must use a distinct experiment_name (e.g., `v2_my_experiment`)
 - **Never train into v2 without preserving baseline first**
 
+## Canonical Baseline
+
+- **Canonical verified baseline suite:** `artifacts/live_eval/suites/suite_<known_baseline>.json`
+- **Canonical baseline commit:** specific git hash (document when creating baseline)
+
 ## Before Any Code Change
 
 1. **Freeze baseline**:
@@ -32,6 +37,12 @@
 - `latest_summary.json` - single mode, easily overwritten
 - Memory - always cite artifacts
 - "It looked better" - always cite numbers from suite files
+
+## Do Not Mix
+
+- **Do not compare suites from different experiment_name values** unless the matching `metadata.json` files are cited.
+- **Do not compare models with different observation schemas** as if they were the same experiment lineage.
+- **Do not compare a new run's results to a preserved baseline** without explicitly citing both suite artifacts.
 
 ## When Changing experiment_name
 
