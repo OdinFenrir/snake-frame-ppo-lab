@@ -38,6 +38,7 @@ class PanelControls:
     btn_options_close: Button
     btn_adaptive_toggle: Button
     btn_space_strategy_toggle: Button
+    btn_tail_trend_toggle: Button
     btn_theme_cycle: Button
     btn_board_bg_cycle: Button
     btn_snake_style_cycle: Button

@@ -60,6 +60,8 @@ def observation_size(obs_config: ObsConfig) -> int:
         base += 8
     if obs_config.use_free_space_features:
         base += 1
+    if obs_config.use_tail_trend_features:
+        base += 2
     return base
 
 
@@ -115,6 +117,8 @@ def build_observation(
     direction: Direction,
     food: Point,
     obs_config: ObsConfig | None = None,
+    tail_reachable_streak: int = 0,
+    tail_unreachable_streak: int = 0,
 ) -> np.ndarray:
     config = obs_config or ObsConfig()
     head = snake[0]
@@ -185,5 +189,10 @@ def build_observation(
         reachable = max(0, reachable_cell_count(board_cells, snake, head) - 1)
         free_ratio = float(reachable) / float(max(1, free_cells))
         values.append(float(free_ratio))
+
+    if config.use_tail_trend_features:
+        tail_trend_streak_max = 20
+        values.append(float(min(tail_reachable_streak, tail_trend_streak_max)) / float(tail_trend_streak_max))
+        values.append(float(min(tail_unreachable_streak, tail_trend_streak_max)) / float(tail_trend_streak_max))
 
     return np.array(values, dtype=np.float32)

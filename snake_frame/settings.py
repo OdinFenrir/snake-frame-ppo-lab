@@ -56,6 +56,7 @@ class ObsConfig:
     use_path_features: bool = False
     use_tail_path_features: bool = False
     use_free_space_features: bool = False
+    use_tail_trend_features: bool = False
 
 
 @dataclass(frozen=True)

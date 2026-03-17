@@ -31,6 +31,14 @@ def draw(app) -> None:
         on_color=(app.theme.toggle_positive_bg, app.theme.toggle_positive_hover),
         off_color=(app.theme.toggle_negative_bg, app.theme.toggle_negative_hover),
     )
+    tail_trend_enabled = bool(getattr(app.app_state, 'tail_trend_enabled', True))
+    app._set_toggle_button_visual(
+        app.btn_tail_trend_toggle,
+        label="Tail Trend",
+        enabled=tail_trend_enabled,
+        on_color=(app.theme.toggle_positive_bg, app.theme.toggle_positive_hover),
+        off_color=(app.theme.toggle_negative_bg, app.theme.toggle_negative_hover),
+    )
     debug_enabled = bool(app.app_state.debug_overlay)
     app._set_toggle_button_visual(
         app.btn_debug_toggle,
@@ -205,7 +213,7 @@ def draw_options_window(app) -> None:
     btn_w = panel.width - (pad * 2)
     row_y = panel.y + 50
     sections = [
-        ("Training", [app.btn_adaptive_toggle, app.btn_space_strategy_toggle]),
+        ("Training", [app.btn_adaptive_toggle, app.btn_space_strategy_toggle, app.btn_tail_trend_toggle]),
         ("Visual", [app.btn_theme_cycle, app.btn_board_bg_cycle, app.btn_snake_style_cycle, app.btn_fog_cycle]),
         ("Live Speed", [app.btn_speed_down, app.btn_speed_up]),
         ("Evaluation", [app.btn_eval_suite, app.btn_eval_holdout]),

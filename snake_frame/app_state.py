@@ -9,6 +9,7 @@ def empty_death_counts() -> dict[str, int]:
         "body": 0,
         "starvation": 0,
         "fill": 0,
+        "none": 0,
         "other": 0,
     }
 
@@ -22,7 +23,9 @@ class AppState:
     debug_overlay: bool = False
     debug_reachable_overlay: bool = False
     space_strategy_enabled: bool = True
+    tail_trend_enabled: bool = True
     training_episode_scores: list[int] = field(default_factory=list)
+    training_episode_steps: list[int] = field(default_factory=list)
     training_death_counts: dict[str, int] = field(default_factory=empty_death_counts)
     ui_state_version: int = 2
     status_severity: str = "info"

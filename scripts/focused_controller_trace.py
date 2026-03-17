@@ -89,7 +89,7 @@ def main() -> None:
             state_dir=Path(args.state_dir),
             ppo_config=ppo_profile_config("app", seed=1337),
             reward_config=RewardConfig(),
-            obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True, use_tail_trend_features=True),
         )
         out_dir = Path(args.out_dir)
         holdout = HoldoutEvalController(

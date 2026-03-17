@@ -188,6 +188,7 @@ class SnakeFrameApp:
         self.btn_options_close: Button = controls.btn_options_close
         self.btn_adaptive_toggle: Button = controls.btn_adaptive_toggle
         self.btn_space_strategy_toggle: Button = controls.btn_space_strategy_toggle
+        self.btn_tail_trend_toggle: Button = controls.btn_tail_trend_toggle
         self.btn_theme_cycle: Button = controls.btn_theme_cycle
         self.btn_board_bg_cycle: Button = controls.btn_board_bg_cycle
         self.btn_snake_style_cycle: Button = controls.btn_snake_style_cycle
@@ -219,6 +220,7 @@ class SnakeFrameApp:
         self._button_actions_options: list[tuple[Button, Callable[[], None]]] = [
             (self.btn_adaptive_toggle, self.actions.on_adaptive_toggle_clicked),
             (self.btn_space_strategy_toggle, self._on_space_strategy_toggle_clicked),
+            (self.btn_tail_trend_toggle, self._on_tail_trend_toggle_clicked),
             (self.btn_theme_cycle, self._on_theme_cycle_clicked),
             (self.btn_board_bg_cycle, self._on_board_background_cycle_clicked),
             (self.btn_snake_style_cycle, self._on_snake_style_cycle_clicked),
@@ -239,6 +241,13 @@ class SnakeFrameApp:
         self.gameplay.set_space_strategy_enabled(enabled)
         state = "ON" if enabled else "OFF"
         self.actions.set_status(f"Space strategy {state}")
+
+    def _on_tail_trend_toggle_clicked(self) -> None:
+        current = getattr(self.app_state, 'tail_trend_enabled', True)
+        new_state = not current
+        self.app_state.tail_trend_enabled = bool(new_state)
+        state = "ON" if new_state else "OFF"
+        self.actions.set_status(f"Tail trend features {state}")
 
     def _on_theme_cycle_clicked(self) -> None:
         themes = available_themes()
@@ -854,6 +863,12 @@ class SnakeFrameApp:
             window_limit = int(getattr(self.game, "EPISODE_HISTORY_LIMIT", 240))
             if score_window_len < window_limit and score_window_len <= int(death_total_before):
                 self._append_episode_score(int(score))
+        steps = info.get("steps")
+        if steps is not None:
+            self.app_state.training_episode_steps.append(int(steps))
+            limit = int(getattr(self.game, "EPISODE_HISTORY_LIMIT", 240))
+            if len(self.app_state.training_episode_steps) > limit:
+                self.app_state.training_episode_steps = self.app_state.training_episode_steps[-limit:]
         reason = self._normalize_death_reason(str(info.get("death_reason", "other")))
         counts = self.app_state.training_death_counts
         if reason not in counts:
@@ -863,7 +878,7 @@ class SnakeFrameApp:
     @staticmethod
     def _normalize_death_reason(reason: str) -> str:
         raw = str(reason or "").strip().lower()
-        if raw in ("wall", "body", "starvation", "fill"):
+        if raw in ("wall", "body", "starvation", "fill", "none"):
             return raw
         return "other"
 
@@ -874,6 +889,7 @@ class SnakeFrameApp:
             f"B{int(counts.get('body', 0))} "
             f"S{int(counts.get('starvation', 0))} "
             f"F{int(counts.get('fill', 0))} "
+            f"N{int(counts.get('none', 0))} "
             f"O{int(counts.get('other', 0))}"
         )
 
@@ -998,11 +1014,13 @@ class SnakeFrameApp:
 
     def _build_training_graph_badges(self) -> list[str]:
         scores = [int(v) for v in self.app_state.training_episode_scores]
+        steps_list = [int(v) for v in self.app_state.training_episode_steps]
         snap = self.training.snapshot()
         avg20 = avg_last(scores, 20)
         avg100 = avg_last(scores, 100)
         best = int(max(scores)) if scores else 0
         last = int(scores[-1]) if scores else 0
+        last_steps = int(steps_list[-1]) if steps_list else 0
         ofit = overfit_signal(scores)
         target = max(1, int(snap.target_steps))
         train_deaths = self.app_state.training_death_counts or empty_death_counts()
@@ -1021,6 +1039,7 @@ class SnakeFrameApp:
             f"Avg100 {avg100:.1f}",
             f"Best {best}",
             f"Last {last}",
+            f"Stp {last_steps}",
             f"Eval {last_eval:.2f}" if last_eval is not None else "Eval n/a",
             f"BestEval {best_eval:.2f}@{int(snap.best_eval_step)}" if best_eval is not None else "BestEval n/a",
             f"D {self._format_death_counts(train_deaths)}",

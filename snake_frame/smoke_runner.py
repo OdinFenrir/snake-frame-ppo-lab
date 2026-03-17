@@ -134,7 +134,7 @@ def run_headless_smoke(
             on_score=lambda s: training_scores.append(int(s)),
             ppo_config=ppo_cfg,
             reward_config=RewardConfig(),
-            obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True),
+            obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True, use_tail_trend_features=False),
             state_dir=temp_dir / "state",
         )
         gameplay = GameplayController(

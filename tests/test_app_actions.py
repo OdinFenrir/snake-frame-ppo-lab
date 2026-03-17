@@ -186,7 +186,7 @@ class TestAppActions(unittest.TestCase):
                 debug_reachable_overlay=True,
                 training_episode_scores=[3, 7, 9],
             )
-            app_state.training_death_counts = {"wall": 2, "body": 3, "starvation": 1, "fill": 0, "other": 4}
+            app_state.training_death_counts = {"wall": 2, "body": 3, "starvation": 1, "fill": 0, "none": 0, "other": 4}
             game = _FakeGame()
             game.episode_scores = [3, 7, 9]
             agent = _FakeAgent()
@@ -219,7 +219,7 @@ class TestAppActions(unittest.TestCase):
             app_state.debug_overlay = False
             app_state.debug_reachable_overlay = False
             app_state.training_episode_scores = []
-            app_state.training_death_counts = {"wall": 0, "body": 0, "starvation": 0, "fill": 0, "other": 0}
+            app_state.training_death_counts = {"wall": 0, "body": 0, "starvation": 0, "fill": 0, "none": 0, "other": 0}
             agent.adaptive_reward_enabled = True
             agent.load_result = True
             theme_name["value"] = "terminal_sunset"
@@ -228,7 +228,7 @@ class TestAppActions(unittest.TestCase):
             self.assertTrue(training.reset_called)
             self.assertEqual(game.episode_scores, [3, 7, 9])
             self.assertEqual(app_state.training_episode_scores, [3, 7, 9])
-            self.assertEqual(app_state.training_death_counts, {"wall": 2, "body": 3, "starvation": 1, "fill": 0, "other": 4})
+            self.assertEqual(app_state.training_death_counts, {"wall": 2, "body": 3, "starvation": 1, "fill": 0, "none": 0, "other": 4})
             self.assertEqual(generations.value, "999")
             self.assertTrue(app_state.game_running)
             self.assertFalse(app_state.space_strategy_enabled)

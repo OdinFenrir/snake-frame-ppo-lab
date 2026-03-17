@@ -30,6 +30,7 @@ class ControlsBuildResult:
     btn_options_close: Button
     btn_adaptive_toggle: Button
     btn_space_strategy_toggle: Button
+    btn_tail_trend_toggle: Button
     btn_theme_cycle: Button
     btn_board_bg_cycle: Button
     btn_snake_style_cycle: Button
@@ -254,6 +255,13 @@ def build_controls(
         bg_hover=theme.toggle_positive_hover,
     )
     y += int(controls_layout.row_height + controls_layout.gap)
+    btn_tail_trend_toggle = Button(
+        "Tail Trend: ON",
+        pygame.Rect(controls_layout.x, y, controls_layout.width, controls_layout.row_height),
+        bg=theme.toggle_positive_bg,
+        bg_hover=theme.toggle_positive_hover,
+    )
+    y += int(controls_layout.row_height + controls_layout.gap)
     btn_theme_cycle = Button(
         f"Theme: {theme.name}",
         pygame.Rect(controls_layout.x, y, controls_layout.width, controls_layout.row_height),
@@ -353,6 +361,7 @@ def build_controls(
         btn_options_close=btn_options_close,
         btn_adaptive_toggle=btn_adaptive_toggle,
         btn_space_strategy_toggle=btn_space_strategy_toggle,
+        btn_tail_trend_toggle=btn_tail_trend_toggle,
         btn_theme_cycle=btn_theme_cycle,
         btn_board_bg_cycle=btn_board_bg_cycle,
         btn_snake_style_cycle=btn_snake_style_cycle,
@@ -385,6 +394,7 @@ def build_controls(
         btn_options_close=btn_options_close,
         btn_adaptive_toggle=btn_adaptive_toggle,
         btn_space_strategy_toggle=btn_space_strategy_toggle,
+        btn_tail_trend_toggle=btn_tail_trend_toggle,
         btn_theme_cycle=btn_theme_cycle,
         btn_board_bg_cycle=btn_board_bg_cycle,
         btn_snake_style_cycle=btn_snake_style_cycle,

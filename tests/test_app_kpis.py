@@ -40,6 +40,7 @@ class TestAppKpis(unittest.TestCase):
         app = SnakeFrameApp.__new__(SnakeFrameApp)
         app.app_state = SimpleNamespace(
             training_episode_scores=[],
+            training_episode_steps=[],
             training_death_counts={"wall": 0, "body": 0, "starvation": 0, "fill": 0, "other": 0},
         )
         app.game = SimpleNamespace(EPISODE_HISTORY_LIMIT=240)
@@ -48,6 +49,35 @@ class TestAppKpis(unittest.TestCase):
         SnakeFrameApp._append_training_episode_info(app, {"score": 7, "death_reason": "body"})
         self.assertEqual(app.app_state.training_episode_scores, [7])
         self.assertEqual(app.app_state.training_death_counts["body"], 1)
+
+    def test_training_episode_info_captures_steps(self) -> None:
+        app = SnakeFrameApp.__new__(SnakeFrameApp)
+        app.app_state = SimpleNamespace(
+            training_episode_scores=[],
+            training_episode_steps=[],
+            training_death_counts={"wall": 0, "body": 0, "starvation": 0, "fill": 0, "other": 0},
+        )
+        app.game = SimpleNamespace(EPISODE_HISTORY_LIMIT=240)
+        app._append_episode_score = lambda score: app.app_state.training_episode_scores.append(int(score))
+        app._normalize_death_reason = SnakeFrameApp._normalize_death_reason
+        SnakeFrameApp._append_training_episode_info(app, {"score": 7, "steps": 150, "death_reason": "body"})
+        self.assertEqual(app.app_state.training_episode_steps, [150])
+        SnakeFrameApp._append_training_episode_info(app, {"score": 12, "steps": 200, "death_reason": "wall"})
+        self.assertEqual(app.app_state.training_episode_steps, [150, 200])
+
+    def test_training_episode_info_trims_steps_history(self) -> None:
+        app = SnakeFrameApp.__new__(SnakeFrameApp)
+        app.app_state = SimpleNamespace(
+            training_episode_scores=[1] * 240,
+            training_episode_steps=list(range(240)),
+            training_death_counts={"wall": 300, "body": 40, "starvation": 10, "fill": 0, "other": 5},
+        )
+        app.game = SimpleNamespace(EPISODE_HISTORY_LIMIT=240)
+        app._append_episode_score = lambda score: app.app_state.training_episode_scores.append(int(score))
+        app._normalize_death_reason = SnakeFrameApp._normalize_death_reason
+        SnakeFrameApp._append_training_episode_info(app, {"score": 9, "steps": 999, "death_reason": "body"})
+        self.assertEqual(len(app.app_state.training_episode_steps), 240)
+        self.assertEqual(app.app_state.training_episode_steps[-1], 999)
 
     def test_training_episode_info_does_not_duplicate_scores_when_window_is_capped(self) -> None:
         app = SnakeFrameApp.__new__(SnakeFrameApp)

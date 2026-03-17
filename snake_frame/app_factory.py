@@ -53,7 +53,7 @@ def build_runtime(
     state_file = state_dir / "ui_state.json"
     artifact_dir = state_dir / "ppo" / "v2"
     legacy_model_file = state_dir / "ppo_snake_model.zip"
-    obs_config = obs_config or ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True)
+    obs_config = obs_config or ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True, use_tail_trend_features=True)
     agent = agent_cls(
         settings=settings,
         artifact_dir=artifact_dir,

@@ -65,6 +65,8 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
         self.steps = 0
         self.steps_without_food = 0
         self.prev_food_dist = 0
+        self._tail_reachable_streak: int = 0
+        self._tail_unreachable_streak: int = 0
         self.reset(seed=seed)
 
     def reset(
@@ -80,6 +82,8 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
         self.score = 0
         self.steps = 0
         self.steps_without_food = 0
+        self._tail_reachable_streak = 0
+        self._tail_unreachable_streak = 0
         self._spawn_food()
         self.prev_food_dist = self._food_distance()
         return self._obs(), {}
@@ -151,6 +155,7 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
             reward += float(self.reward_config.fill_board_bonus)
             terminated = True
 
+        self._update_tail_streak()
         death_reason = "none"
         if terminated:
             death_reason = "fill"
@@ -159,6 +164,16 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
         info = {"score": int(self.score), "steps": int(self.steps), "death_reason": str(death_reason)}
         return self._obs(), float(reward), terminated, truncated, info
 
+    def _update_tail_streak(self) -> None:
+        from .board_analysis import tail_path_length
+        current_tail_reachable = tail_path_length(self.board_cells, self.snake) is not None
+        if current_tail_reachable:
+            self._tail_reachable_streak += 1
+            self._tail_unreachable_streak = 0
+        else:
+            self._tail_unreachable_streak += 1
+            self._tail_reachable_streak = 0
+
     def _obs(self) -> np.ndarray:
         return build_observation(
             self.board_cells,
@@ -166,6 +181,8 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
             self.direction,
             self.food,
             obs_config=self.obs_config,
+            tail_reachable_streak=self._tail_reachable_streak,
+            tail_unreachable_streak=self._tail_unreachable_streak,
         )
 
     def _food_distance(self) -> int:

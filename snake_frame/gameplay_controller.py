@@ -150,6 +150,8 @@ class GameplayController:
         self._last_predicted_action: int | None = None
         self._last_chosen_action: int | None = None
         self._last_chosen_tail_reachable = True
+        self._tail_reachable_streak = 0
+        self._tail_unreachable_streak = 0
         self._last_capacity_shortfall = 0
         self._last_proposed_tail_reachable = True
         self._last_proposed_capacity_shortfall = 0
@@ -349,6 +351,8 @@ class GameplayController:
             direction=self.game.direction,
             food=self.game.food,
             obs_config=self.obs_config,
+            tail_reachable_streak=self._tail_reachable_streak,
+            tail_unreachable_streak=self._tail_unreachable_streak,
         )
         action_probs: tuple[float, float, float] | None = None
         debug_needed = bool(self._debug_overlay_enabled or self._reachable_overlay_enabled)
@@ -1090,9 +1094,17 @@ class GameplayController:
         if chosen_eval is not None:
             _score, tail_reachable, capacity_shortfall = chosen_eval
             self._last_chosen_tail_reachable = bool(tail_reachable)
+            if self._last_chosen_tail_reachable:
+                self._tail_reachable_streak += 1
+                self._tail_unreachable_streak = 0
+            else:
+                self._tail_unreachable_streak += 1
+                self._tail_reachable_streak = 0
             self._last_capacity_shortfall = int(capacity_shortfall)
         else:
             self._last_chosen_tail_reachable = True
+            self._tail_reachable_streak = 0
+            self._tail_unreachable_streak = 0
             self._last_capacity_shortfall = 0
         high_conf_guard_threshold = float(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_threshold", 0.97))
         high_conf_guard_pressure_max = float(getattr(self._dynamic_cfg, "ppo_high_conf_override_guard_food_pressure_max", 0.6))
