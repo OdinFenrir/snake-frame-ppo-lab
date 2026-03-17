@@ -89,19 +89,26 @@ class SidePanelsRenderer:
         surface.blit(self._static_background(left_w, board_w, right_w, panel_h), (0, 0))
 
         self._draw_right_options(surface, controls)
+        
+        # Use fixed layout positions based on graph rects
         right_inner_width = int(self.settings.right_panel_px - 36)
         right_x = int(data.training_graph_rect.x)
-        right_y = int(self.tokens.spacing.right_options_y + self.tokens.components.right_options_height + self.tokens.spacing.section_gap)
-        line_h = self._line_height()
-        self._draw_section_header(surface, "Training KPIs", right_x, right_y)
-        right_y += line_h
+        
+        # Training KPIs section - use fixed position above training graph
+        training_header_y = data.training_graph_rect.y - 80  # Fixed offset from graph top
+        self._draw_section_header(surface, "Training KPIs", right_x, training_header_y)
+        
+        # Draw badges in fixed area
+        training_badges_y = training_header_y + 30
         _ = self._draw_graph_badges(
             surface,
             start_x=right_x,
-            start_y=right_y,
+            start_y=training_badges_y,
             max_width=right_inner_width,
             badges=data.training_graph_badges,
         )
+        
+        # Draw training graph
         train_graph_rect = pygame.Rect(data.training_graph_rect)
         pygame.draw.rect(surface, self.theme.graph_bg, train_graph_rect)
         self.graph.draw(
@@ -111,9 +118,12 @@ class SidePanelsRenderer:
             empty_message="Train PPO to build graph.",
         )
 
-        run_section_y = int(data.training_graph_rect.bottom + self.tokens.spacing.section_gap)
-        self._draw_section_header(surface, "Run KPIs", right_x, run_section_y)
-        run_badges_y = int(run_section_y + line_h)
+        # Run KPIs section - use fixed position above run graph  
+        run_header_y = data.run_graph_rect.y - 80  # Fixed offset from graph top
+        self._draw_section_header(surface, "Run KPIs", right_x, run_header_y)
+        
+        # Draw badges in fixed area
+        run_badges_y = run_header_y + 30
         _ = self._draw_graph_badges(
             surface,
             start_x=right_x,
@@ -121,6 +131,8 @@ class SidePanelsRenderer:
             max_width=right_inner_width,
             badges=data.run_graph_badges,
         )
+        
+        # Draw run graph
         run_graph_rect = pygame.Rect(data.run_graph_rect)
         pygame.draw.rect(surface, self.theme.graph_bg, run_graph_rect)
         self.graph.draw(
@@ -129,6 +141,7 @@ class SidePanelsRenderer:
             data.run_episode_scores,
             empty_message="Play/Watch runs to build graph.",
         )
+        
         self._draw_left_panel_sections(
             surface,
             controls.generations_input.rect.y - 28,

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pygame
 
-from .panel_layout import build_panel_layout
+from .panel_layout import build_panel_layout, build_right_panel_layout
 from .panel_ui import PanelControls
 from .settings import Settings
 from .theme import get_design_tokens, get_theme
@@ -101,50 +101,16 @@ def build_controls(
         panel_x=right_panel_x,
         panel_width=int(settings.right_panel_px),
     )
-    right_inner_x = int(graph_layout.graph_rect.x)
-    right_inner_w = int(graph_layout.graph_rect.width)
-    right_top = int(tokens.spacing.right_options_y + tokens.components.right_options_height + tokens.spacing.section_gap_large)
-    window_h = int(settings.window_height_px or settings.window_px)
-    right_bottom = int(window_h - graph_margin - int(tokens.spacing.right_graph_bottom_reserve))
-    section_header_h = max(24, int(tokens.typography.status_line_min_height + tokens.spacing.right_header_block_gap))
-    section_gap = int(tokens.spacing.section_gap_large)
-    # Fixed grid layout: reserve fixed heights for each section
-    # This prevents text from moving dynamically or overlapping graphs
-    # Fixed heights: header=24, badges_area=60, gap=10, graph=dynamic
-    fixed_header_h = 24
-    fixed_badges_h = 60
-    fixed_gap = 10
-    
-    # Calculate available space for graphs
-    total_non_graph = (2 * fixed_header_h) + (2 * fixed_badges_h) + (3 * fixed_gap)
-    available_graph_h = max(300, int(right_bottom - right_top - total_non_graph))
-    each_graph_h = max(int(tokens.components.graph_min_height_large), int(available_graph_h // 2))
-    
-    # Fixed grid positions
-    training_header_y = right_top
-    training_badges_y = training_header_y + fixed_header_h + fixed_gap
-    training_graph_y = training_badges_y + fixed_badges_h + fixed_gap
-    
-    run_header_y = training_graph_y + each_graph_h + fixed_gap
-    run_badges_y = run_header_y + fixed_header_h + fixed_gap
-    run_graph_y = run_badges_y + fixed_badges_h + fixed_gap
-
-    training_graph_rect = pygame.Rect(
-        right_inner_x,
-        training_graph_y,
-        right_inner_w,
-        each_graph_h,
-    )
-    run_graph_rect = pygame.Rect(
-        right_inner_x,
-        run_graph_y,
-        right_inner_w,
-        max(120, int(right_bottom - run_graph_y)),
-    )
+    # Use fixed right panel layout for stable KPI dashboard
+    right_layout = build_right_panel_layout(settings)
+    right_inner_x = right_layout.inner_x
+    right_inner_w = right_layout.inner_width
+    training_graph_rect = right_layout.training_graph_rect
+    run_graph_rect = right_layout.run_graph_rect
     graph_rect = pygame.Rect(run_graph_rect)
-    right_options_y = int(tokens.spacing.right_options_y)
+    right_options_y = right_layout.utility_row_y
     right_options_gap = int(tokens.spacing.right_options_gap)
-    right_options_height = int(tokens.components.right_options_height)
+    right_options_height = right_layout.utility_row_height
     right_options_width = int((right_inner_w - right_options_gap) // 2)
     btn_debug_toggle = Button(
         "Debug: OFF",
