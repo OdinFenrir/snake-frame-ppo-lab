@@ -18,10 +18,10 @@ Summary:
 
 ## Before Any Code Change
 
-1. **Freeze baseline**:
-   ```bash
-   cp -r state/ppo/v2 state/ppo/v2_BASELINE
-   cp artifacts/live_eval/suites/latest_suite.json artifacts/live_eval/suites/suite_BASELINE_$(date +%Y%m%d).json
+1. **Freeze baseline** (Windows):
+   ```powershell
+   xcopy /E /I state\ppo\v2 state\ppo\v2_BASELINE
+   copy artifacts\live_eval\suites\latest_suite.json artifacts\live_eval\suites\suite_BASELINE_%date:~0,4%%date:~5,2%%date:~8,2%.json
    ```
 
 2. **Document what you're preserving**:

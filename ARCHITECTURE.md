@@ -20,9 +20,6 @@ Entry points:
 - `snake_frame/app.py`: Application entry and runtime bootstrap
 - `snake_frame/app_factory.py`: Composition/wiring layer for runtime dependencies
 
-Factory wiring:
-- `snake_frame/app_factory.py`
-
 Core runtime modules:
 - `snake_frame/game.py`: game state, mechanics, board updates, rendering primitives
 - `snake_frame/gameplay_controller.py`: policy+controller action selection and telemetry
