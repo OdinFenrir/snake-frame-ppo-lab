@@ -49,7 +49,7 @@ At each game decision:
 
 During training:
 1. PPO runs in vectorized environments.
-2. Evaluation/checkpoints are saved under `state/ppo/v2/`.
+2. Evaluation/checkpoints are saved under `state/ppo/<experiment_name>/`. The default baseline path is `state/ppo/v2/`.
 3. You can watch live behavior in the same app while training runs.
 4. Post-run, focused seed tools identify exactly where controller behavior underperforms.
 
@@ -81,21 +81,38 @@ Not versioned by design (local experiment data):
 - `state/` (local models/checkpoints/UI state)
 - `artifacts/` (generated diagnostics/evals/reports)
 
+### Experiment Isolation
+
+- Baseline runs use the default experiment path: `state/ppo/v2/`
+- New experiments should use a distinct `experiment_name`
+- Before training into the baseline path, preserve both:
+  - the baseline model directory under `state/ppo/v2/`
+  - the matching suite artifact under `artifacts/live_eval/suites/`
+
+For trustworthy comparisons, cite:
+- git commit
+- suite artifact (`artifacts/live_eval/suites/suite_*.json`)
+- matching `metadata.json`
+- experiment name
+
 ## Main Controls (In App)
 
 - `Start Train` / `Stop Train`
 - `Save` / `Load` / `Delete`
 - `Start Game` / `Stop Game` / `Restart`
 - Options: adaptive reward, space strategy, themes/backgrounds, debug overlays, diagnostics export
+- The settings panel shows the active experiment name so you can see which artifact directory the app is using
 
 ## Persistence
 
-Saved artifacts:
+Saved artifacts (default baseline path shown):
 - `state/ui_state.json`
-- `state/ppo/v2/*`
-- `state/ppo/v2/metadata.json`
-- `state/ppo/v2/arbiter_model.json`
-- `state/ppo/v2/tactic_memory.json`
+- `state/ppo/<experiment_name>/*`
+- `state/ppo/<experiment_name>/metadata.json`
+- `state/ppo/<experiment_name>/arbiter_model.json`
+- `state/ppo/<experiment_name>/tactic_memory.json`
+
+By default, the app uses `experiment_name = "v2"`, so baseline runs write to `state/ppo/v2/`.
 
 Metadata captures run IDs, timesteps, configs, provenance, and eval summaries for future tuning.
 
