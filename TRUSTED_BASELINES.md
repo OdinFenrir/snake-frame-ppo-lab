@@ -45,7 +45,9 @@ But they are **NOT suitable for benchmark claims** because:
 | Latest suite | `artifacts/live_eval/suites/suite_20260317_092448.json` |
 | Suite mean (ppo_only) | 150.63 |
 | Suite mean (controller_on) | 150.20 |
-| Commit | `7c05191` (docs update) |
+| **Baseline-producing code** | `cc22fee` to `549ab63` era (trust cutoff through tail-trend) |
+| **Baseline documented in repo at** | `7c05191` or later |
+| **Trust cutoff begins at** | `cc22fee` |
 
 ---
 
@@ -80,6 +82,9 @@ git log -1 --format="%H %s" > state/ppo/v2_BASELINE/commit.txt
 
 ## Key Cutoff Commit
 
-**`cc22fee`** - First commit with experiment isolation support
+**`cc22fee`** - First commit with experiment isolation support (baseline-producing code era)
 
 This is the formal boundary. Artifacts created before this commit are from the pre-discipline era.
+
+- **Baseline-producing code**: `cc22fee` to `549ab63` - the actual code that trained the model and ran the suite
+- **Documentation commits**: `7c05191`, `7b22942` - later commits that recorded the baseline
