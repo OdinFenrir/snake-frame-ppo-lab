@@ -96,6 +96,7 @@ class SnakeFrameApp:
         self.ui_prefs_file = self.state_file.with_name("ui_prefs.json")
         self.obs_config = runtime.obs_config
         self.agent = runtime.agent
+        self.experiment_name = runtime.experiment_name
         self.training = runtime.training
         self.holdout_eval = HoldoutEvalController(
             agent=self.agent,
@@ -1081,6 +1082,7 @@ class SnakeFrameApp:
         cfg = getattr(self.agent, "config", None)
         reward_cfg = getattr(self.agent, "reward_config", None)
         lines = [
+            f"Experiment: {self.experiment_name}",
             f"Board: {self.settings.board_cells}x{self.settings.board_cells} cell={self.settings.cell_px} tpm={self.settings.ticks_per_move} fps={self.settings.fps}",
             f"Safety override: {'on' if self.settings.agent_safety_override else 'off'}",
             f"Space strategy: {'on' if self.gameplay.is_space_strategy_enabled() else 'off'}",
