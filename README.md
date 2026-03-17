@@ -58,54 +58,38 @@ At each game decision:
 ### Decision Stack
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        GAME STATE                                │
-│   (snake body, head, food, grid, death_reason)                 │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    OBSERVATION LAYER                             │
-│   Build features: extended, path, tail_path, free_space, trend   │
-│   Output: 31-dim feature vector                                  │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       PPO INFERENCE                              │
-│   Input: observation                                            │
-│   Output: action logits + confidence score                      │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   RISK EVALUATION                                │
-│   - Danger: immediate death if move?                            │
-│   - Space viability: would this trap the snake?                  │
-│   - Food pressure: how far from food?                           │
-│   - Cycle signals: are we looping?                              │
-│   - Tail reachability: can we reach tail?                       │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   CONTROLLER ARBITRATION                         │
-│                                                                   │
-│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐        │
-│   │    PPO      │    │   ESCAPE    │    │ SPACE_FILL  │        │
-│   │   (trust)   │    │  (cycles)   │    │ (no progress)│        │
-│   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘        │
-│          │                   │                   │                │
-│          ▼                   ▼                   ▼                │
-│   ┌─────────────────────────────────────────────────────┐       │
-│   │              LEARNED MEMORY                          │       │
-│   │   arbiter_model.json  +  tactic_memory.json         │       │
-│   │   (online learned arbitration + clustered tactics)   │       │
-│   └──────────────────────┬──────────────────────────────┘       │
-│                          │                                       │
-│                          ▼                                       │
-│                 FINAL ACTION QUEUE                               │
-└─────────────────────────────────────────────────────────────────┘
+                         GAME STATE
+              (snake body, head, food, grid)
+                            |
+                            v
+                    OBSERVATION LAYER
+              (31-dim: extended, path, tail, free_space, trend)
+                            |
+                            v
+                       PPO INFERENCE
+              (observation -> action logits + confidence)
+                            |
+                            v
+                     RISK EVALUATION
+              - Danger: immediate death if move?
+              - Space: would this trap the snake?
+              - Food pressure: how far from food?
+              - Cycle signals: are we looping?
+              - Tail reachability: can we reach tail?
+                            |
+                            v
+                 CONTROLLER ARBITRATION
+    +---------------+---------------+---------------+
+    |     PPO       |    ESCAPE     |  SPACE_FILL   |
+    |   (trust)     |   (cycles)    | (no progress) |
+    +---------------+---------------+---------------+
+                            |
+                            v
+                    LEARNED MEMORY
+        (arbiter_model.json + tactic_memory.json)
+                            |
+                            v
+                     FINAL ACTION
 ```
 
 ### Controller Modes
