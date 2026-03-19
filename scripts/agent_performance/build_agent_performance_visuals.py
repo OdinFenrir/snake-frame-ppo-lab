@@ -4,7 +4,29 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
+
+_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+
+
+def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
+    keep = max(0, int(retain))
+    prefix = f"{stem_prefix}_"
+    candidates: list[Path] = []
+    for path in out_dir.glob(f"{prefix}*{suffix}"):
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix) : len(name) - len(suffix)]
+        if middle == "latest":
+            continue
+        if not _STAMP_TOKEN_RE.fullmatch(middle):
+            continue
+        candidates.append(path)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in candidates[keep:]:
+        stale.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -347,6 +369,7 @@ def main() -> None:
     parser.add_argument("--in-dir", type=str, default="artifacts/agent_performance")
     parser.add_argument("--out-dir", type=str, default="artifacts/agent_performance")
     parser.add_argument("--tag", type=str, default="latest")
+    parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -362,10 +385,15 @@ def main() -> None:
     latest = out_dir / f"agent_performance_dashboard_{tag}.html"
     stamped.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
+    _prune_stamped_outputs(
+        out_dir,
+        stem_prefix="agent_performance_dashboard",
+        suffix=".html",
+        retain=int(args.retain_stamped),
+    )
     print(f"Wrote: {stamped}")
     print(f"Wrote: {latest}")
 
 
 if __name__ == "__main__":
     main()
-

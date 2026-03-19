@@ -168,6 +168,11 @@ For trustworthy comparisons, cite:
 
 ## Main Controls (In App)
 
+- Workspace entry screen:
+  - `Live Training` (main game/training UI)
+  - `Analysis Tools` (report runners + in-app output viewer)
+  - `Application Settings` (opens options panel)
+  - `Esc` from live app returns to workspace menu
 - `Start Train` / `Stop Train`
 - `Save` / `Load` / `Delete`
 - `Start Manual` or `Start Agent` (context-aware) / `Stop Game` / `Restart`
@@ -179,6 +184,24 @@ For trustworthy comparisons, cite:
   - `Playback Speed`: Slower / Faster
   - `Model Checks`: Run Full Evaluation, Run Holdout Check, Eval mode toggle (PPO vs Controller)
   - `Debug & Tools`: Debug Overlay, Reachability Overlay, Export Diagnostics
+
+### Analysis Tools Menu (In App)
+
+- `Training Quality Report` (single model)
+- `Agent Runtime Report` (single model)
+- `Model vs Model Compare` (Model 1 vs Model 2)
+- `Failure Replay`
+- `Evaluation Suite`
+- `Policy 3D Explorer`
+- `Model Graph (Netron)`
+
+Model selector behavior:
+- Single-model tools use one selector (`Model`).
+- Compare tool uses two selectors (`Model 1`, `Model 2`).
+
+Execution model:
+- In-app Analysis Tools execute Python scripts directly (no `.bat` dependency for app workflow).
+- Root `.bat` files remain as optional helper entrypoints for manual terminal runs.
 
 ### Model Safety Workflow
 
@@ -275,6 +298,22 @@ Model+agent compare report one-shot (Windows):
   - `artifacts/phase3_compare/model_agent_compare_dashboard_latest.html` (interactive charts)
   - `artifacts/reports/reports_hub_latest.md` (single organized hub)
   - `artifacts/reports/reports_hub_latest.txt` (plain-text copy/paste)
+
+### Artifact Retention Policy
+
+To reduce noise from repeated analysis on the same run, report generators keep:
+- `latest` aliases (always)
+- last **N** stamped files per output type (default `N=5`)
+
+Supported flag:
+- `--retain-stamped <N>` on report generator scripts (`training_input`, `agent_performance`, `phase3_compare`, including dashboard builders)
+
+Example:
+- `run_training_input_report.bat --artifact-dir state\ppo\Test_1 --retain-stamped 3`
+
+Notes:
+- Retention prunes only stamped outputs for that report family.
+- `latest` files are never pruned.
 
 ## Evaluation Protocol + Baseline Tracking
 

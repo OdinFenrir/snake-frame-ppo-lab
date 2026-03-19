@@ -4,7 +4,29 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
+
+_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+
+
+def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
+    keep = max(0, int(retain))
+    prefix = f"{stem_prefix}_"
+    candidates: list[Path] = []
+    for path in out_dir.glob(f"{prefix}*{suffix}"):
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix) : len(name) - len(suffix)]
+        if middle == "latest":
+            continue
+        if not _STAMP_TOKEN_RE.fullmatch(middle):
+            continue
+        candidates.append(path)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in candidates[keep:]:
+        stale.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -192,12 +214,12 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
   <style>
     body {{
       margin: 0;
-      background: #0b1520;
-      color: #d9e6ee;
+      background: #0f1220;
+      color: #e7edf5;
       font-family: Segoe UI, Arial, sans-serif;
     }}
     .wrap {{
-      max-width: 1500px;
+      max-width: 1600px;
       margin: 0 auto;
       padding: 16px;
     }}
@@ -208,13 +230,21 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
       margin-bottom: 14px;
     }}
     .card {{
-      background: #102132;
-      border: 1px solid #21445f;
+      background: #182236;
+      border: 1px solid #31445f;
       border-radius: 10px;
       padding: 10px;
+      min-height: 56px;
     }}
-    .k {{ color: #8bb4ca; font-size: 12px; }}
-    .v {{ color: #f3f8fb; font-size: 21px; font-weight: 700; line-height: 1.2; }}
+    .k {{ color: #98abc4; font-size: 12px; }}
+    .v {{
+      color: #f6f9fc;
+      font-size: 21px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.1;
+    }}
     .v-mono {{
       font-family: Consolas, "Courier New", monospace;
       white-space: nowrap;
@@ -228,17 +258,17 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
       gap: 12px;
     }}
     .plot {{
-      border: 1px solid #21445f;
+      border: 1px solid #31445f;
       border-radius: 10px;
       min-height: 320px;
-      background: #0f2030;
+      background: #182236;
     }}
     .checks {{
       margin-top: 14px;
-      border: 1px solid #21445f;
+      border: 1px solid #31445f;
       border-radius: 10px;
       padding: 10px;
-      background: #0f2030;
+      background: #182236;
     }}
     .ok {{ color: #63d18d; }}
     .bad {{ color: #f38b8b; }}
@@ -290,12 +320,12 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
     }}
 
     const baseLayout = {{
-      paper_bgcolor: '#0f2030',
-      plot_bgcolor: '#0f2030',
-      font: {{ color: '#d9e6ee' }},
+      paper_bgcolor: '#182236',
+      plot_bgcolor: '#182236',
+      font: {{ color: '#e7edf5' }},
       margin: {{ l: 55, r: 20, t: 40, b: 45 }},
-      xaxis: {{ gridcolor: '#1f3850', title: 'checkpoint' }},
-      yaxis: {{ gridcolor: '#1f3850' }},
+      xaxis: {{ gridcolor: '#2b3a54', title: 'checkpoint' }},
+      yaxis: {{ gridcolor: '#2b3a54' }},
       showlegend: true,
     }};
 
@@ -394,6 +424,7 @@ def main() -> None:
     parser.add_argument("--in-dir", type=str, default="artifacts/training_input")
     parser.add_argument("--out-dir", type=str, default="artifacts/training_input")
     parser.add_argument("--tag", type=str, default="latest")
+    parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -411,6 +442,12 @@ def main() -> None:
     latest = out_dir / f"training_input_dashboard_{tag}.html"
     stamped.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
+    _prune_stamped_outputs(
+        out_dir,
+        stem_prefix="training_input_dashboard",
+        suffix=".html",
+        retain=int(args.retain_stamped),
+    )
     print(f"Wrote: {stamped}")
     print(f"Wrote: {latest}")
 

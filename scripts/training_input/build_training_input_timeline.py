@@ -12,6 +12,26 @@ import numpy as np
 
 _STEP_MODEL_RE = re.compile(r"^step_(\d+)_steps\.zip$", re.IGNORECASE)
 _STEP_VEC_RE = re.compile(r"^step_vecnormalize_(\d+)_steps\.pkl$", re.IGNORECASE)
+_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+
+
+def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
+    keep = max(0, int(retain))
+    prefix = f"{stem_prefix}_"
+    candidates: list[Path] = []
+    for path in out_dir.glob(f"{prefix}*{suffix}"):
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix) : len(name) - len(suffix)]
+        if middle == "latest":
+            continue
+        if not _STAMP_TOKEN_RE.fullmatch(middle):
+            continue
+        candidates.append(path)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in candidates[keep:]:
+        stale.unlink(missing_ok=True)
 
 
 def _resolve_default_artifact_dir(root: Path) -> Path:
@@ -226,6 +246,7 @@ def main() -> None:
     parser.add_argument("--artifact-dir", type=str, default="")
     parser.add_argument("--out-dir", type=str, default="artifacts/training_input")
     parser.add_argument("--tag", type=str, default="latest")
+    parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -261,6 +282,24 @@ def main() -> None:
     json_latest.write_text(json_text, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
     md_latest.write_text(md_stamp.read_text(encoding="utf-8"), encoding="utf-8")
+    _prune_stamped_outputs(
+        out_dir,
+        stem_prefix="training_input_timeline",
+        suffix=".json",
+        retain=int(args.retain_stamped),
+    )
+    _prune_stamped_outputs(
+        out_dir,
+        stem_prefix="training_input_timeline",
+        suffix=".csv",
+        retain=int(args.retain_stamped),
+    )
+    _prune_stamped_outputs(
+        out_dir,
+        stem_prefix="training_input_timeline",
+        suffix=".md",
+        retain=int(args.retain_stamped),
+    )
 
     print(f"Wrote: {json_stamp}")
     print(f"Wrote: {csv_stamp}")

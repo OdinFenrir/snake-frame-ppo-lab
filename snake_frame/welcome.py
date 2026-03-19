@@ -88,7 +88,7 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Training Quality Report",
             category="Reports",
             description="Model-side training quality, checkpoints, and timeline dashboard",
-            command=("cmd", "/c", "run_training_input_report.bat"),
+            command=(),
             outputs=(
                 "artifacts/training_input/training_input_latest.md",
                 "artifacts/reports/reports_hub_latest.txt",
@@ -100,7 +100,7 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Agent Runtime Report",
             category="Reports",
             description="Runtime behavior quality and intervention metrics",
-            command=("cmd", "/c", "run_agent_performance_report.bat"),
+            command=(),
             outputs=(
                 "artifacts/agent_performance/agent_performance_latest.md",
                 "artifacts/reports/reports_hub_latest.txt",
@@ -112,7 +112,7 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Model vs Model Compare",
             category="Reports",
             description=f"Compare model+agent between saves ({left_exp} vs {right_exp})",
-            command=("cmd", "/c", "run_model_agent_compare_report.bat"),
+            command=(),
             outputs=(
                 "artifacts/phase3_compare/model_agent_compare_latest.md",
                 "artifacts/reports/reports_hub_latest.txt",
@@ -124,7 +124,7 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Failure Replay",
             category="Diagnostics",
             description="Replay and summarize worst failure traces",
-            command=("cmd", "/c", "run_blind_spot_replay.bat"),
+            command=(),
             outputs=(
                 "artifacts/live_eval/blind_spot_replay_latest.json",
                 "artifacts/live_eval/blind_spot_replay_latest.html",
@@ -135,11 +135,11 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             key="postrun_suite",
             label="Evaluation Suite",
             category="Diagnostics",
-            description="Run holdout/eval suite pipeline",
-            command=("cmd", "/c", "run_postrun_suite.bat"),
+            description="Build post-run diagnostics bundle for the selected model",
+            command=(),
             outputs=(
-                "artifacts/live_eval/suites/latest_suite.json",
-                "artifacts/reports/reports_hub_latest.txt",
+                "artifacts/share/diagnostics_bundle.json",
+                "artifacts/share/diagnostics_bundle.md",
             ),
             embeddable=True,
         ),
@@ -148,7 +148,7 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Policy 3D Explorer",
             category="Model Views",
             description="Launch 3D policy visualization",
-            command=("cmd", "/c", "run_policy_3d.bat"),
+            command=(),
             outputs=("artifacts/share/policy_3d_latest.html",),
             embeddable=False,
         ),
@@ -157,19 +157,228 @@ def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             label="Model Graph (Netron)",
             category="Model Views",
             description="Open model graph with Netron",
-            command=("cmd", "/c", "run_netron.bat"),
+            command=(),
             outputs=(),
             embeddable=False,
         ),
     ]
 
 
-def _resolve_tool_command(spec: ToolSpec, *, left_exp: str, right_exp: str) -> tuple[str, ...]:
+def _python_exe(root: Path) -> str:
+    venv_py = root / ".venv" / "Scripts" / "python.exe"
+    if venv_py.exists():
+        return str(venv_py)
+    return "python"
+
+
+def _resolve_model_path(root: Path, exp_name: str) -> Path:
+    preferred = root / "state" / "ppo" / exp_name / "best_score_model.zip"
+    if preferred.exists():
+        return preferred
+    fallback = root / "state" / "ppo" / exp_name / "best_model.zip"
+    if fallback.exists():
+        return fallback
+    return preferred
+
+
+def _resolve_tool_commands(spec: ToolSpec, *, left_exp: str, right_exp: str) -> list[tuple[str, ...]]:
+    root = _project_root()
+    py = _python_exe(root)
+    if spec.key == "training_input":
+        return [
+            (
+                py,
+                "scripts/training_input/build_training_input_report.py",
+                "--artifact-dir",
+                f"state/ppo/{left_exp}",
+                "--out-dir",
+                "artifacts/training_input",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/training_input/build_training_input_timeline.py",
+                "--artifact-dir",
+                f"state/ppo/{left_exp}",
+                "--out-dir",
+                "artifacts/training_input",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/training_input/build_training_input_visuals.py",
+                "--in-dir",
+                "artifacts/training_input",
+                "--out-dir",
+                "artifacts/training_input",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/reporting/build_reports_hub.py",
+                "--artifacts-root",
+                "artifacts",
+                "--out-dir",
+                "artifacts/reports",
+            ),
+        ]
+    if spec.key == "agent_performance":
+        return [
+            (
+                py,
+                "scripts/agent_performance/build_agent_performance_report.py",
+                "--artifact-dir",
+                f"state/ppo/{left_exp}",
+                "--out-dir",
+                "artifacts/agent_performance",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/agent_performance/build_agent_performance_visuals.py",
+                "--in-dir",
+                "artifacts/agent_performance",
+                "--out-dir",
+                "artifacts/agent_performance",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/reporting/build_reports_hub.py",
+                "--artifacts-root",
+                "artifacts",
+                "--out-dir",
+                "artifacts/reports",
+            ),
+        ]
     if spec.key == "phase3_compare":
-        return (*spec.command, left_exp, right_exp)
-    if spec.key in ("training_input", "agent_performance"):
-        return (*spec.command, "--artifact-dir", f"state/ppo/{left_exp}")
-    return spec.command
+        return [
+            (
+                py,
+                "scripts/phase3_compare/build_model_agent_compare_report.py",
+                "--left-exp",
+                left_exp,
+                "--right-exp",
+                right_exp,
+                "--out-dir",
+                "artifacts/phase3_compare",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/phase3_compare/build_model_agent_compare_visuals.py",
+                "--in-dir",
+                "artifacts/phase3_compare",
+                "--out-dir",
+                "artifacts/phase3_compare",
+                "--tag",
+                "latest",
+                "--retain-stamped",
+                "5",
+            ),
+            (
+                py,
+                "scripts/reporting/build_reports_hub.py",
+                "--artifacts-root",
+                "artifacts",
+                "--out-dir",
+                "artifacts/reports",
+            ),
+        ]
+    if spec.key == "blind_spot":
+        return [
+            (
+                py,
+                "scripts/blind_spot_replay.py",
+                "--trace-root",
+                "artifacts/live_eval/focused_traces",
+                "--latest-only",
+                "--min-confidence",
+                "0.7",
+                "--max-steps-to-death",
+                "10",
+                "--replay-window",
+                "30",
+                "--max-spots",
+                "50",
+                "--require-death",
+                "--out",
+                "artifacts/live_eval/blind_spot_replay_latest.json",
+            ),
+            (
+                py,
+                "scripts/blind_spot_replay_view.py",
+                "--input",
+                "artifacts/live_eval/blind_spot_replay_latest.json",
+                "--out",
+                "artifacts/live_eval/blind_spot_replay_latest.html",
+            ),
+        ]
+    if spec.key == "postrun_suite":
+        return [
+            (
+                py,
+                "scripts/post_run_suite.py",
+                "--artifact-dir",
+                f"state/ppo/{left_exp}",
+                "--artifacts-root",
+                "artifacts",
+                "--out-dir",
+                "artifacts/share",
+                "--print-summary",
+            )
+        ]
+    if spec.key in ("policy_3d", "netron"):
+        model_path = _resolve_model_path(root, left_exp)
+        if spec.key == "policy_3d":
+            return [
+                (
+                    py,
+                    "scripts/view_policy_3d.py",
+                    "--model",
+                    str(model_path),
+                    "--episodes",
+                    "8",
+                    "--max-steps",
+                    "800",
+                    "--max-points",
+                    "4000",
+                    "--out",
+                    "artifacts/share/policy_3d_latest.html",
+                )
+            ]
+        netron_exe = root / ".venv" / "Scripts" / "netron.exe"
+        trace_out = root / "artifacts" / "netron" / "policy_trace.pt"
+        return [
+            (
+                py,
+                "scripts/export_policy_trace.py",
+                "--model",
+                str(model_path),
+                "--out",
+                str(trace_out),
+            ),
+            (str(netron_exe), str(trace_out), "-b"),
+        ]
+    return []
 
 
 def _read_output_preview(path: Path, *, max_lines: int = 180) -> str:
@@ -236,18 +445,25 @@ def show_welcome_window() -> WelcomeRoute | None:
         def _run() -> None:
             nonlocal worker_running, status_text, worker_result, viewer_text, viewer_title, screen_state, viewer_scroll
             try:
-                cmd = _resolve_tool_command(spec, left_exp=left_exp, right_exp=right_exp)
-                proc = subprocess.run(
-                    list(cmd),
-                    cwd=str(root),
-                    capture_output=True,
-                    text=True,
-                    shell=False,
-                    timeout=60 * 60,
-                )
-                out = (proc.stdout or "").strip()
-                err = (proc.stderr or "").strip()
-                merged = "\n".join([x for x in [out, err] if x]).strip()
+                cmds = _resolve_tool_commands(spec, left_exp=left_exp, right_exp=right_exp)
+                merged_chunks: list[str] = []
+                for cmd in cmds:
+                    proc = subprocess.run(
+                        list(cmd),
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        shell=False,
+                        timeout=60 * 60,
+                    )
+                    out = (proc.stdout or "").strip()
+                    err = (proc.stderr or "").strip()
+                    block = "\n".join([x for x in [out, err] if x]).strip()
+                    if block:
+                        merged_chunks.append(f"$ {' '.join(cmd)}\n{block}")
+                    if proc.returncode != 0:
+                        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}")
+                merged = "\n\n".join(merged_chunks).strip()
                 with worker_lock:
                     worker_result = merged if merged else "(no console output)"
                     worker_running = False
@@ -613,7 +829,13 @@ def show_welcome_window() -> WelcomeRoute | None:
             emb_surf = small_font.render(emb, True, theme.status_color)
             surface.blit(emb_surf, (right_rect.x + 12, detail_y + 74))
 
-            cmd = " ".join(_resolve_tool_command(sel, left_exp=left_exp, right_exp=right_exp))
+            resolved_cmds = _resolve_tool_commands(sel, left_exp=left_exp, right_exp=right_exp)
+            if resolved_cmds:
+                cmd = " ; ".join(" ".join(step) for step in resolved_cmds[:2])
+                if len(resolved_cmds) > 2:
+                    cmd += f" ; +{len(resolved_cmds)-2} step(s)"
+            else:
+                cmd = "(no command)"
             cmd_surf = small_font.render(_fit_text(small_font, f"Command: {cmd}", right_rect.width - 24), True, theme.status_color)
             surface.blit(cmd_surf, (right_rect.x + 12, detail_y + 98))
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-03-19 - analysis tools consistency and report retention
+
+- Fixed analysis-tools execution/preview consistency:
+  - Policy 3D output now writes to `artifacts/share/policy_3d_latest.html` (matches in-app viewer expectations).
+  - Post-run suite tool wiring now targets `artifacts/share/diagnostics_bundle.*` in Analysis Tools.
+  - Analysis Tools model selection now applies to:
+    - Training Quality Report
+    - Agent Runtime Report
+    - Evaluation Suite
+    - Policy 3D Explorer
+    - Model Graph (Netron)
+  - Compare mode remains two-model only for `Model vs Model Compare`.
+  - In-app Analysis Tools now execute direct Python/Netron command pipelines (no `.bat` dependency inside app runtime).
+  - `.bat` wrappers remain available as optional manual entrypoints.
+- Removed text-popup noise:
+  - Report runners no longer auto-open `reports_hub_latest.txt`.
+  - `run_reports_hub.bat` now opens dashboard only.
+- Added safe stamped-artifact retention policy in report generators:
+  - Keep `latest` aliases + last `N` stamped files per output type (`N=5` default).
+  - Added `--retain-stamped` support to report and dashboard builders in:
+    - `scripts/training_input/*`
+    - `scripts/agent_performance/*`
+    - `scripts/phase3_compare/*`
+- Repo hygiene:
+  - Removed stray root `nul` file and added `nul` to `.gitignore`.
+
 ## 2026-03-19 - model safety and experiment targeting
 
 - Added explicit experiment-target workflow for model actions:

@@ -6,7 +6,7 @@ cd /d "%ROOT%"
 set "PYTHON=%ROOT%.venv\Scripts\python.exe"
 set "SCRIPT=%ROOT%scripts\view_policy_3d.py"
 set "MODEL=%ROOT%state\ppo\baseline\best_score_model.zip"
-set "OUT=%ROOT%artifacts\visuals\policy_embedding_3d.html"
+set "OUT=%ROOT%artifacts\share\policy_3d_latest.html"
 
 if not "%~1"=="" set "MODEL=%~1"
 if "%~1"=="" if not exist "%MODEL%" set "MODEL=%ROOT%state\ppo\baseline\best_model.zip"

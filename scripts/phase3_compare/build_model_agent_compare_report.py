@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
 
+_STAMP_TOKEN_RE = re.compile(r"^(?:.*_)?\d{8}_\d{6}$")
 
 @dataclass(frozen=True)
 class ComparePaths:
@@ -367,6 +369,25 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("".join(out), encoding="utf-8")
 
 
+def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
+    keep = max(0, int(retain))
+    prefix = f"{stem_prefix}_"
+    candidates: list[Path] = []
+    for path in out_dir.glob(f"{prefix}*{suffix}"):
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix) : len(name) - len(suffix)]
+        if middle == "latest":
+            continue
+        if not _STAMP_TOKEN_RE.fullmatch(middle):
+            continue
+        candidates.append(path)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in candidates[keep:]:
+        stale.unlink(missing_ok=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build pairwise model+agent compare report from experiment folders.")
     parser.add_argument("--left-exp", type=str, required=True)
@@ -374,6 +395,7 @@ def main() -> None:
     parser.add_argument("--ppo-root", type=str, default="state/ppo")
     parser.add_argument("--out-dir", type=str, default="artifacts/phase3_compare")
     parser.add_argument("--tag", type=str, default="latest")
+    parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -404,6 +426,24 @@ def main() -> None:
     json_latest.write_text(json_text, encoding="utf-8")
     md_latest.write_text(md_text, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
+    _prune_stamped_outputs(
+        paths.out_dir,
+        stem_prefix="model_agent_compare",
+        suffix=".json",
+        retain=int(args.retain_stamped),
+    )
+    _prune_stamped_outputs(
+        paths.out_dir,
+        stem_prefix="model_agent_compare",
+        suffix=".md",
+        retain=int(args.retain_stamped),
+    )
+    _prune_stamped_outputs(
+        paths.out_dir,
+        stem_prefix="model_agent_compare_rows",
+        suffix=".csv",
+        retain=int(args.retain_stamped),
+    )
 
     print(f"Wrote: {json_stamp}")
     print(f"Wrote: {md_stamp}")

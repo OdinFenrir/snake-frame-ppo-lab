@@ -32,9 +32,6 @@ echo   %HUB_TXT%
 if exist "%DASH_HTML%" (
   start "" "%DASH_HTML%"
 )
-if exist "%HUB_TXT%" (
-  start "" notepad.exe "%HUB_TXT%"
-)
 
 :end
 if /I "%~1"=="--no-pause" goto :eof
