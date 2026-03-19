@@ -24,6 +24,7 @@ from .theme import get_theme, normalize_theme_name
 
 WelcomeRoute = Literal["live_training", "settings"]
 ScreenState = Literal["menu", "tools", "viewer", "manager"]
+WORKSPACE_APP_NAME = "Snake RL Research Lab"
 
 
 def _project_root() -> Path:
@@ -117,7 +118,7 @@ def show_welcome_window() -> WelcomeRoute | None:
     init_w = max(960, min(1400, int(info.current_w * 0.74)))
     init_h = max(640, min(920, int(info.current_h * 0.76)))
     surface = pygame.display.set_mode((init_w, init_h), pygame.RESIZABLE)
-    pygame.display.set_caption("Snake Frame - Workspace")
+    pygame.display.set_caption(f"{WORKSPACE_APP_NAME} - Workspace")
 
     root = _project_root()
     theme = get_theme(_load_saved_theme_name())
@@ -607,7 +608,7 @@ def show_welcome_window() -> WelcomeRoute | None:
         )
 
         if screen_state == "menu":
-            title = title_font.render("Snake Frame", True, theme.title_color)
+            title = title_font.render(WORKSPACE_APP_NAME, True, theme.title_color)
             subtitle = sub_font.render("Choose your workspace", True, theme.status_color)
             surface.blit(title, ((win_w - title.get_width()) // 2, max(46, int(win_h * 0.11))))
             surface.blit(subtitle, ((win_w - subtitle.get_width()) // 2, max(98, int(win_h * 0.19))))
@@ -876,7 +877,7 @@ def show_welcome_window() -> WelcomeRoute | None:
             promote_label = "Confirm Promote" if promote_armed else "Set Selected As Baseline"
             action_buttons = [
                 (manager_btn_promote, promote_label, theme.toggle_positive_bg),
-                (manager_btn_delete, delete_label, theme.toggle_danger_bg),
+                (manager_btn_delete, delete_label, theme.toggle_negative_bg),
                 (manager_btn_recover, recover_label, theme.toggle_info_bg),
             ]
             for rect, label, tone in action_buttons:
