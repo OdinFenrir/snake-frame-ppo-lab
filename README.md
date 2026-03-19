@@ -218,6 +218,7 @@ Useful scripts:
 - `scripts/blind_spot_replay_view.py`
 - `scripts/training_input/build_training_input_report.py` (training-input-only report)
 - `scripts/agent_performance/build_agent_performance_report.py` (agent-performance-only report)
+- `scripts/phase3_compare/build_model_agent_compare_report.py` (Phase 3 pairwise model+agent compare report)
 
 Controller suite contract (automatic):
 - `controller_on` summaries now emit:
@@ -259,6 +260,19 @@ Agent-performance report one-shot (Windows):
   - `artifacts/agent_performance/agent_performance_latest.md`
   - `artifacts/agent_performance/agent_performance_rows_latest.csv`
   - `artifacts/agent_performance/agent_performance_dashboard_latest.html` (interactive charts)
+  - `artifacts/reports/reports_hub_latest.md` (single organized hub)
+  - `artifacts/reports/reports_hub_latest.txt` (plain-text copy/paste)
+
+Model+agent compare report one-shot (Windows):
+- `run_model_agent_compare_report.bat <left_experiment> <right_experiment>`
+- If args are omitted, it prompts for both experiment folder names (under `state/ppo/`)
+- Example:
+  - `run_model_agent_compare_report.bat baseline Test_1`
+- Generates:
+  - `artifacts/phase3_compare/model_agent_compare_latest.json`
+  - `artifacts/phase3_compare/model_agent_compare_latest.md`
+  - `artifacts/phase3_compare/model_agent_compare_rows_latest.csv`
+  - `artifacts/phase3_compare/model_agent_compare_dashboard_latest.html` (interactive charts)
   - `artifacts/reports/reports_hub_latest.md` (single organized hub)
   - `artifacts/reports/reports_hub_latest.txt` (plain-text copy/paste)
 

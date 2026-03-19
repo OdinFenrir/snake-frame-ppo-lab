@@ -144,6 +144,45 @@ def _agent_performance_summary(agent_dir: Path) -> list[str]:
     return lines
 
 
+def _model_agent_compare_summary(compare_dir: Path) -> list[str]:
+    lines: list[str] = []
+    latest_json = compare_dir / "model_agent_compare_latest.json"
+    latest_md = compare_dir / "model_agent_compare_latest.md"
+    latest_csv = compare_dir / "model_agent_compare_rows_latest.csv"
+    latest_dashboard = compare_dir / "model_agent_compare_dashboard_latest.html"
+    report = _read_json(latest_json)
+    compare = dict(report.get("compare", {})) if isinstance(report.get("compare"), dict) else {}
+    summary = dict(report.get("summary", {})) if isinstance(report.get("summary"), dict) else {}
+
+    lines.append("## Model + Agent Compare")
+    lines.append(f"- JSON: `{_fmt(latest_json if latest_json.exists() else None)}`")
+    lines.append(f"- Markdown: `{_fmt(latest_md if latest_md.exists() else None)}`")
+    lines.append(f"- Rows CSV: `{_fmt(latest_csv if latest_csv.exists() else None)}`")
+    lines.append(f"- Dashboard HTML: `{_fmt(latest_dashboard if latest_dashboard.exists() else None)}`")
+    lines.append("")
+    lines.append("### Copy/Paste Summary")
+    lines.append("```text")
+    lines.append(
+        "left={left} right={right} verdict={verdict}".format(
+            left=compare.get("left_experiment", ""),
+            right=compare.get("right_experiment", ""),
+            verdict=compare.get("verdict", "UNKNOWN"),
+        )
+    )
+    lines.append(
+        "wins left={wl} right={wr} tie={ties} checks ok={ok} fail={fail}".format(
+            wl=int(summary.get("wins_left", 0) or 0),
+            wr=int(summary.get("wins_right", 0) or 0),
+            ties=int(summary.get("ties", 0) or 0),
+            ok=int(summary.get("checks_ok", 0) or 0),
+            fail=int(summary.get("checks_fail", 0) or 0),
+        )
+    )
+    lines.append("```")
+    lines.append("")
+    return lines
+
+
 def _generic_category_lines(title: str, dir_path: Path) -> list[str]:
     lines = [f"## {title}"]
     if not dir_path.exists():
@@ -169,6 +208,9 @@ def _generic_category_lines(title: str, dir_path: Path) -> list[str]:
 def build_hub(artifacts_root: Path, out_dir: Path) -> tuple[Path, Path]:
     training_input_dir = artifacts_root / "training_input"
     agent_performance_dir = artifacts_root / "agent_performance"
+    model_agent_compare_dir = artifacts_root / "phase3_compare"
+    if not model_agent_compare_dir.exists() and (artifacts_root / "model_agent_compare").exists():
+        model_agent_compare_dir = artifacts_root / "model_agent_compare"
     live_eval_dir = artifacts_root / "live_eval"
     share_dir = artifacts_root / "share"
     generated_utc = datetime.now(timezone.utc).isoformat()
@@ -181,6 +223,7 @@ def build_hub(artifacts_root: Path, out_dir: Path) -> tuple[Path, Path]:
     lines.append("")
     lines.extend(_training_input_summary(training_input_dir))
     lines.extend(_agent_performance_summary(agent_performance_dir))
+    lines.extend(_model_agent_compare_summary(model_agent_compare_dir))
     lines.extend(_generic_category_lines("Live Eval", live_eval_dir))
     lines.extend(_generic_category_lines("Share", share_dir))
 
