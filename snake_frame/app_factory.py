@@ -23,7 +23,7 @@ class AppRuntime:
     agent: AgentLike
     training: TrainingLike
     panel_renderer: SidePanelsRenderer
-    experiment_name: str = "v2"
+    experiment_name: str = "baseline"
 
 
 def build_runtime(
@@ -39,7 +39,7 @@ def build_runtime(
     reward_config: RewardConfig | None = None,
     obs_config: ObsConfig | None = None,
     state_dir: Path | None = None,
-    experiment_name: str = "v2",
+    experiment_name: str = "baseline",
 ) -> AppRuntime:
     if agent_cls is None:
         from .ppo_agent import PpoSnakeAgent as agent_cls

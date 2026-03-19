@@ -333,7 +333,7 @@ def build_bundle(paths: SuitePaths) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect a complete post-run diagnostics suite into one bundle.")
-    parser.add_argument("--artifact-dir", type=str, default="state/ppo/v2")
+    parser.add_argument("--artifact-dir", type=str, default="state/ppo/baseline")
     parser.add_argument("--artifacts-root", type=str, default="artifacts")
     parser.add_argument("--out-dir", type=str, default="artifacts/share")
     parser.add_argument("--print-summary", action="store_true")

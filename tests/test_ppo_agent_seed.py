@@ -36,7 +36,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be provided together"):
             PpoSnakeAgent(
                 settings=Settings(),
-                artifact_dir=Path("state/ppo/v2_seed_test"),
+                artifact_dir=Path("state/ppo/baseline_seed_test"),
                 config=bad_config,
                 reward_config=RewardConfig(),
                 obs_config=ObsConfig(),
@@ -53,7 +53,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -89,7 +89,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -124,7 +124,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -160,7 +160,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -199,7 +199,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -232,7 +232,7 @@ class TestPpoAgentSeed(unittest.TestCase):
     def test_save_detailed_propagates_reload_failure(self) -> None:
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=PpoConfig(env_count=1, n_steps=8, batch_size=4, n_epochs=2),
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -262,7 +262,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -292,7 +292,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),
@@ -319,7 +319,7 @@ class TestPpoAgentSeed(unittest.TestCase):
         )
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=config,
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),

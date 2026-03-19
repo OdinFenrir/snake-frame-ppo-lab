@@ -136,7 +136,7 @@ class TestLiveArtifacts(unittest.TestCase):
     def test_artifact_consistency_metadata_and_traces(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            art = root / "state" / "ppo" / "v2"
+            art = root / "state" / "ppo" / "baseline"
             eval_logs = art / "eval_logs"
             eval_logs.mkdir(parents=True, exist_ok=True)
 

@@ -29,7 +29,7 @@ But they are **NOT suitable for benchmark claims** because:
 ### Requirements for Trustworthy Claims
 
 1. **Git commit** - must cite the exact commit hash
-2. **Experiment name** - must be explicit (`v2` for baseline, or custom name for experiments)
+2. **Experiment name** - must be explicit (`baseline` for the default baseline, or custom name for experiments)
 3. **Matching metadata.json** - must be cited alongside any comparison
 4. **Suite artifact** - must use `artifacts/live_eval/suites/suite_*.json` (NOT `latest_summary.json`)
 5. **Known comparison context** - must specify: ppo_only vs controller_on, seed set, model selector
@@ -38,13 +38,13 @@ But they are **NOT suitable for benchmark claims** because:
 
 | Artifact | Value |
 |----------|-------|
-| Experiment name | `v2` |
+| Experiment name | `baseline` |
 | Observation schema | 31-dim (all ObsConfig flags = true) |
-| Model | `state/ppo/v2/last_model.zip` |
-| Metadata | `state/ppo/v2/metadata.json` |
-| Latest suite | `artifacts/live_eval/suites/suite_20260317_092448.json` |
-| Suite mean (ppo_only) | 150.63 |
-| Suite mean (controller_on) | 150.20 |
+| Model | `state/ppo/baseline/last_model.zip` |
+| Metadata | `state/ppo/baseline/metadata.json` |
+| Latest suite | `pending (generate fresh suite in new cycle)` |
+| Suite mean (ppo_only) | `pending` |
+| Suite mean (controller_on) | `pending` |
 | **Baseline-producing code** | `cc22fee` to `549ab63` era (trust cutoff through tail-trend) |
 | **Baseline documented in repo at** | `7c05191` or later |
 | **Trust cutoff begins at** | `cc22fee` |
@@ -69,13 +69,13 @@ Before any code change that could affect model behavior:
 
 ```bash
 # 1. Freeze model artifacts
-cp -r state/ppo/v2 state/ppo/v2_BASELINE
+cp -r state/ppo/baseline state/ppo/baseline_BASELINE
 
 # 2. Freeze suite artifact  
 cp artifacts/live_eval/suites/latest_suite.json artifacts/live_eval/suites/suite_BASELINE_$(date +%Y%m%d).json
 
 # 3. Document commit
-git log -1 --format="%H %s" > state/ppo/v2_BASELINE/commit.txt
+git log -1 --format="%H %s" > state/ppo/baseline_BASELINE/commit.txt
 ```
 
 ---

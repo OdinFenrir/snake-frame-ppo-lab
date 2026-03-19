@@ -83,7 +83,7 @@ def _collect_candidates(root: Path, aggressive: bool) -> list[Candidate]:
 
 def _collect_checkpoint_candidates(root: Path) -> list[Candidate]:
     out: list[Candidate] = []
-    checkpoints_dir = root / "state" / "ppo" / "v2" / "checkpoints"
+    checkpoints_dir = root / "state" / "ppo" / "baseline" / "checkpoints"
     if not checkpoints_dir.exists():
         return out
 
@@ -137,7 +137,7 @@ def main() -> None:
     parser.add_argument(
         "--last-run-only",
         action="store_true",
-        help="Keep only the most recent checkpoint pair under state/ppo/v2/checkpoints.",
+        help="Keep only the most recent checkpoint pair under state/ppo/baseline/checkpoints.",
     )
     args = parser.parse_args()
 

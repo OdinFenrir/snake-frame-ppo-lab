@@ -425,7 +425,7 @@ class PpoSnakeAgent:
         return str(self._inference_selector.value)
 
     def _default_legacy_model_path(self) -> Path:
-        if self.artifact_dir.name == "v2" and self.artifact_dir.parent.name == "ppo":
+        if self.artifact_dir.parent.name == "ppo":
             return self.artifact_dir.parent.parent / "ppo_snake_model.zip"
         return self.artifact_dir.parent / "ppo_snake_model.zip"
 
@@ -868,7 +868,7 @@ class PpoSnakeAgent:
         selected_model_path = self._selected_model_path(selector)
         last_model_path = self._last_model_path()
         if not selected_model_path.exists() and not last_model_path.exists() and resume_artifacts is None:
-            return ModelOpResult(ok=False, code=ModelOpCode.MISSING, detail="v2 model artifacts do not exist")
+            return ModelOpResult(ok=False, code=ModelOpCode.MISSING, detail="model artifacts do not exist")
         if not selected_model_path.exists() and resume_artifacts is None:
             return ModelOpResult(
                 ok=False,

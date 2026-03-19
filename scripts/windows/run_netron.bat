@@ -6,13 +6,13 @@ cd /d "%ROOT%"
 set "NETRON=%ROOT%.venv\Scripts\netron.exe"
 set "PYTHON=%ROOT%.venv\Scripts\python.exe"
 set "EXPORTER=%ROOT%scripts\export_policy_trace.py"
-set "MODEL=%ROOT%state\ppo\v2\best_score_model.zip"
+set "MODEL=%ROOT%state\ppo\baseline\best_score_model.zip"
 set "MODEL_TO_OPEN=%MODEL%"
 set "TRACE_OUT=%ROOT%artifacts\netron\policy_trace.pt"
 
 if not "%~1"=="" set "MODEL=%~1"
 set "MODEL_TO_OPEN=%MODEL%"
-if "%~1"=="" if not exist "%MODEL%" set "MODEL=%ROOT%state\ppo\v2\best_model.zip"
+if "%~1"=="" if not exist "%MODEL%" set "MODEL=%ROOT%state\ppo\baseline\best_model.zip"
 if "%~1"=="" set "MODEL_TO_OPEN=%MODEL%"
 
 if not exist "%NETRON%" (

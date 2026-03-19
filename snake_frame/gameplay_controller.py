@@ -216,7 +216,7 @@ class GameplayController:
         self._last_decision_context: _DecisionContext | None = None
         self._learning_enabled = True
         self._persist_learning = artifact_dir is not None
-        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else (Path(__file__).resolve().parents[1] / "state" / "ppo" / "v2")
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else (Path(__file__).resolve().parents[1] / "state" / "ppo" / "baseline")
         self._arbiter_path = self._artifact_dir / "arbiter_model.json"
         self._tactic_memory_path = self._artifact_dir / "tactic_memory.json"
         self._arbiter_dirty = False
@@ -283,7 +283,7 @@ class GameplayController:
     def set_artifact_dir(self, artifact_dir: Path | None) -> None:
         self._persist_learning_state()
         self._persist_learning = artifact_dir is not None
-        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else (Path(__file__).resolve().parents[1] / "state" / "ppo" / "v2")
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else (Path(__file__).resolve().parents[1] / "state" / "ppo" / "baseline")
         self._arbiter_path = self._artifact_dir / "arbiter_model.json"
         self._tactic_memory_path = self._artifact_dir / "tactic_memory.json"
         self._arbiter_dirty = False

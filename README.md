@@ -120,7 +120,7 @@ The controller learns from experience via `arbiter_model.json` (online) and `tac
 
 During training:
 1. PPO runs in vectorized environments.
-2. Evaluation/checkpoints are saved under `state/ppo/<experiment_name>/`. The default baseline path is `state/ppo/v2/`.
+2. Evaluation/checkpoints are saved under `state/ppo/<experiment_name>/`. The default baseline path is `state/ppo/baseline/`.
 3. You can watch live behavior in the same app while training runs.
 4. Post-run, focused seed tools identify exactly where controller behavior underperforms.
 
@@ -154,10 +154,10 @@ Not versioned by design (local experiment data):
 
 ### Experiment Isolation
 
-- Baseline runs use the default experiment path: `state/ppo/v2/`
+- Baseline runs use the default experiment path: `state/ppo/baseline/`
 - New experiments should use a distinct `experiment_name`
 - Before training into the baseline path, preserve both:
-  - the baseline model directory under `state/ppo/v2/`
+  - the baseline model directory under `state/ppo/baseline/`
   - the matching suite artifact under `artifacts/live_eval/suites/`
 
 For trustworthy comparisons, cite:
@@ -197,7 +197,7 @@ Saved artifacts (default baseline path shown):
 - `state/ppo/<experiment_name>/arbiter_model.json`
 - `state/ppo/<experiment_name>/tactic_memory.json`
 
-By default, the app uses `experiment_name = "v2"`, so baseline runs write to `state/ppo/v2/`.
+By default, the app uses `experiment_name = "baseline"`, so baseline runs write to `state/ppo/baseline/`.
 
 Metadata captures run IDs, timesteps, configs, provenance, and eval summaries for future tuning.
 
@@ -246,10 +246,13 @@ Protocol for comparable controller-vs-PPO checks:
 4. Compare paired seed deltas (`controller - ppo`) and aggregate means.
 5. Re-check repeatability on worst-10 seeds from `artifacts/live_eval/worst10_latest.json`.
 
-For the current canonical baseline values and trust cutoff, use:
+For the current canonical baseline package and trust boundary, use:
 - `TRUSTED_BASELINES.md`
 - the latest suite under `artifacts/live_eval/suites/`
 - matching `state/ppo/<experiment_name>/metadata.json`
+
+Previous numeric baseline values are archived as historical context only.  
+Generate new baseline metrics from fresh suites in the `baseline` experiment before making benchmark claims.
 
 ## Validation Commands (Local)
 

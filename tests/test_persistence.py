@@ -62,7 +62,7 @@ class TestPersistence(unittest.TestCase):
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_agent_save_load_delete_cycle_v2_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            artifact_dir = Path(tmpdir) / "state" / "ppo" / "v2"
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
             settings = Settings()
             agent = PpoSnakeAgent(
                 settings=settings,
@@ -109,7 +109,7 @@ class TestPersistence(unittest.TestCase):
             legacy_path.write_text("legacy", encoding="utf-8")
             agent = PpoSnakeAgent(
                 settings=Settings(),
-                artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                 config=PpoConfig(env_count=1),
                 reward_config=RewardConfig(),
                 obs_config=ObsConfig(),
@@ -125,7 +125,7 @@ class TestPersistence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = PpoSnakeAgent(
                 settings=Settings(),
-                artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                 config=PpoConfig(env_count=1),
                 reward_config=RewardConfig(),
                 obs_config=ObsConfig(),
@@ -166,7 +166,7 @@ class TestPersistence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = PpoSnakeAgent(
                 settings=Settings(),
-                artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                 config=PpoConfig(env_count=1),
                 reward_config=RewardConfig(),
                 obs_config=ObsConfig(),
@@ -206,7 +206,7 @@ class TestPersistence(unittest.TestCase):
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_agent_load_if_exists_detailed_reports_corrupt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            artifact_dir = Path(tmpdir) / "state" / "ppo" / "v2"
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
             artifact_dir.mkdir(parents=True, exist_ok=True)
             (artifact_dir / "best_model.zip").write_text("broken", encoding="utf-8")
             agent = PpoSnakeAgent(
@@ -227,7 +227,7 @@ class TestPersistence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = PpoSnakeAgent(
                 settings=Settings(),
-                artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                 config=PpoConfig(env_count=1),
                 reward_config=RewardConfig(),
                 obs_config=ObsConfig(),
@@ -244,7 +244,7 @@ class TestPersistence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PpoSnakeAgent(
                     settings=Settings(),
-                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                     config=PpoConfig(env_count=1, n_steps=1),
                     reward_config=RewardConfig(),
                     obs_config=ObsConfig(),
@@ -257,7 +257,7 @@ class TestPersistence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PpoSnakeAgent(
                     settings=Settings(),
-                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                     config=PpoConfig(env_count=1, n_steps=16, batch_size=64),
                     reward_config=RewardConfig(),
                     obs_config=ObsConfig(),
@@ -270,7 +270,7 @@ class TestPersistence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PpoSnakeAgent(
                     settings=Settings(),
-                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                     config=PpoConfig(env_count=3, n_steps=128, batch_size=100),
                     reward_config=RewardConfig(),
                     obs_config=ObsConfig(),
@@ -283,7 +283,7 @@ class TestPersistence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PpoSnakeAgent(
                     settings=Settings(),
-                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                     config=PpoConfig(env_count=1, n_steps=16, batch_size=16, eval_freq_steps=-1),
                     reward_config=RewardConfig(),
                     obs_config=ObsConfig(),
@@ -296,7 +296,7 @@ class TestPersistence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PpoSnakeAgent(
                     settings=Settings(),
-                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "v2",
+                    artifact_dir=Path(tmpdir) / "state" / "ppo" / "baseline",
                     config=PpoConfig(env_count=1, n_steps=16, batch_size=16, target_kl=0.0),
                     reward_config=RewardConfig(),
                     obs_config=ObsConfig(),
@@ -306,7 +306,7 @@ class TestPersistence(unittest.TestCase):
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_load_prefers_resume_model_over_checkpoint_when_both_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            artifact_dir = Path(tmpdir) / "state" / "ppo" / "v2"
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
             checkpoints_dir = artifact_dir / "checkpoints"
             checkpoints_dir.mkdir(parents=True, exist_ok=True)
             last_model = artifact_dir / "last_model.zip"
@@ -346,7 +346,7 @@ class TestPersistence(unittest.TestCase):
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_load_latest_checkpoint_reports_incompatible_observation_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            artifact_dir = Path(tmpdir) / "state" / "ppo" / "v2"
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
             checkpoints_dir = artifact_dir / "checkpoints"
             checkpoints_dir.mkdir(parents=True, exist_ok=True)
             (checkpoints_dir / "step_100_steps.zip").write_text("checkpoint", encoding="utf-8")

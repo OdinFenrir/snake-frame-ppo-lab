@@ -520,7 +520,7 @@ def build_view(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build an interactive 3D policy-embedding viewer.")
-    parser.add_argument("--model", type=str, default="state/ppo/v2/best_score_model.zip")
+    parser.add_argument("--model", type=str, default="state/ppo/baseline/best_score_model.zip")
     parser.add_argument("--vecnormalize", type=str, default="")
     parser.add_argument("--out", type=str, default="artifacts/visuals/policy_embedding_3d.html")
     parser.add_argument("--episodes", type=int, default=24)

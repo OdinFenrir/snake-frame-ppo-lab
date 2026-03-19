@@ -55,7 +55,7 @@ Persisted under `state/ppo/<experiment_name>/`:
 - `arbiter_model.json`
 - `tactic_memory.json`
 
-Default baseline uses `state/ppo/v2/`.
+Default baseline uses `state/ppo/baseline/`.
 
 Purpose:
 - retain controller-side adaptation signals between sessions
@@ -72,7 +72,7 @@ Persisted under `state/ppo/<experiment_name>/`:
 - `vecnormalize.pkl`
 - `metadata.json`
 
-Default baseline uses `state/ppo/v2/`.
+Default baseline uses `state/ppo/baseline/`.
 
 ### Evaluation Artifacts
 

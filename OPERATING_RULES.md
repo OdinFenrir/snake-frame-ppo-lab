@@ -2,9 +2,9 @@
 
 ## Experiment Isolation
 
-- **Baseline runs**: use `v2` (the default)
-- **New experiments**: must use a distinct experiment_name (e.g., `v2_my_experiment`)
-- **Never train into v2 without preserving baseline first**
+- **Baseline runs**: use `baseline` (the default)
+- **New experiments**: must use a distinct experiment name (for example `baseline_experiment_a`)
+- **Never train into baseline without preserving baseline first**
 - **Use explicit experiment targeting for model actions** (`Save` / `Load` / `Delete`)
 - **Do not assume current slot**: confirm the selected experiment before any save/delete
 
@@ -13,16 +13,16 @@
 For the current verified baseline, see `TRUSTED_BASELINES.md`.
 
 Summary:
-- **Baseline experiment:** `v2` (default)
+- **Baseline experiment:** `baseline` (default)
 - **Observation schema:** 31-dim (all ObsConfig flags = true)
-- **Suite artifact:** `artifacts/live_eval/suites/suite_20260317_092448.json`
-- **Trust cutoff:** commit `cc22fee` onward
+- **Baseline metrics:** pending fresh suite generation in this new cycle
+- **Trust cutoff:** commit `cc22fee` onward for artifact-discipline rules
 
 ## Before Any Code Change
 
 1. **Freeze baseline** (Windows):
    ```powershell
-   xcopy /E /I state\ppo\v2 state\ppo\v2_BASELINE
+   xcopy /E /I state\ppo\baseline state\ppo\baseline_BASELINE
    copy artifacts\live_eval\suites\latest_suite.json artifacts\live_eval\suites\suite_BASELINE_%date:~0,4%%date:~5,2%%date:~8,2%.json
    ```
 

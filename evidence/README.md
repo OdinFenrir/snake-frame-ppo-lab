@@ -26,7 +26,7 @@ Per-step decision trace for seed 17001 showing:
 ## Source
 
 Produced from: commit `549ab63` (tail-trend feature era)  
-Experiment: `v2` baseline  
+Experiment: historical `v2` baseline (superseded by current `baseline` experiment)  
 Date: March 17, 2026
 
 These files demonstrate the evaluation discipline documented in TRUSTED_BASELINES.md.

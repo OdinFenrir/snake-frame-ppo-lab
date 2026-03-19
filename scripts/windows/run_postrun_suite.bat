@@ -16,7 +16,7 @@ if not exist "%SCRIPT%" (
 )
 
 echo Collecting post-run diagnostics...
-"%PYTHON%" "%SCRIPT%" --artifact-dir state\ppo\v2 --artifacts-root artifacts --out-dir artifacts\share --print-summary
+"%PYTHON%" "%SCRIPT%" --artifact-dir state\ppo\baseline --artifacts-root artifacts --out-dir artifacts\share --print-summary
 if errorlevel 1 exit /b 1
 
 echo.

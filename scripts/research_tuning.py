@@ -89,7 +89,7 @@ def _build_agent(
     reward_cfg = RewardConfig(**(RewardConfig().__dict__ | dict(reward_overrides)))
     agent = PpoSnakeAgent(
         settings=settings,
-        artifact_dir=run_dir / "ppo" / "v2",
+        artifact_dir=run_dir / "ppo" / "baseline",
         config=cfg,
         reward_config=reward_cfg,
         obs_config=obs_cfg,

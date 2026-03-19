@@ -438,7 +438,7 @@ class AppActions:
                 self.app_state.model_save_state = "saved"
             return
         if "legacy_format_unsupported" in model_code or "incompatible" in model_code:
-            self.set_status("Saved model uses deprecated legacy format; retrain with v2 artifacts", severity="warn")
+            self.set_status("Saved model uses deprecated legacy format; retrain with baseline artifacts", severity="warn")
             return
         self.app_state.model_save_state = "no_model"
         self.app_state.model_dirty = False
@@ -675,12 +675,12 @@ class AppActions:
         return cleaned
 
     def _choose_experiment_for_save(self) -> str | None:
-        current = "v2"
+        current = "baseline"
         if callable(self.get_experiment_name):
             try:
-                current = str(self.get_experiment_name() or "v2")
+                current = str(self.get_experiment_name() or "baseline")
             except Exception:
-                current = "v2"
+                current = "baseline"
         if tk is None or simpledialog is None:
             return current
         try:

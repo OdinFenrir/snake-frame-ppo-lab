@@ -73,7 +73,7 @@ class TestPpoCallback(unittest.TestCase):
     def test_missing_inference_model_is_bootstrapped_during_sync(self) -> None:
         agent = PpoSnakeAgent(
             settings=Settings(),
-            artifact_dir=Path("state/ppo/v2_seed_test"),
+            artifact_dir=Path("state/ppo/baseline_seed_test"),
             config=PpoConfig(env_count=1, n_steps=8, batch_size=4, n_epochs=2),
             reward_config=RewardConfig(),
             obs_config=ObsConfig(),

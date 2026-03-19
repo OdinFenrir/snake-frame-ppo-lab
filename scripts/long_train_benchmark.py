@@ -60,7 +60,7 @@ def _build_agent(*, seed: int, state_dir: Path, profile: str) -> PpoSnakeAgent:
     ppo_cfg = ppo_profile_config(profile, seed=int(seed))
     return PpoSnakeAgent(
         settings=settings,
-        artifact_dir=state_dir / "ppo" / "v2",
+        artifact_dir=state_dir / "ppo" / "baseline",
         config=ppo_cfg,
         reward_config=reward_cfg,
         obs_config=obs_cfg,

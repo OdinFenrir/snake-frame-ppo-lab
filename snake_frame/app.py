@@ -727,7 +727,7 @@ class SnakeFrameApp:
         if result.invalid or not payload:
             return False
 
-        active_experiment = str(payload.get("activeExperiment", self.experiment_name or "v2")).strip()
+        active_experiment = str(payload.get("activeExperiment", self.experiment_name or "baseline")).strip()
         if active_experiment and active_experiment != self.experiment_name:
             if not self._switch_experiment(active_experiment):
                 logger.warning("Failed to restore active experiment from preferences: %s", active_experiment)
@@ -997,7 +997,7 @@ class SnakeFrameApp:
         state_file = getattr(self, "state_file", None)
         if state_file is None:
             return None
-        checkpoint_dir = Path(state_file).parent / "ppo" / "v2" / "checkpoints"
+        checkpoint_dir = Path(state_file).parent / "ppo" / str(self.experiment_name) / "checkpoints"
         try:
             latest = max(
                 (p for p in checkpoint_dir.glob("step_*_steps.zip") if p.is_file()),
@@ -1058,7 +1058,11 @@ class SnakeFrameApp:
         )
         state_file = getattr(self, "state_file", None)
         state_path = Path(state_file) if state_file is not None else None
-        metadata_age = self._path_age_seconds(state_path.parent / "ppo" / "v2" / "metadata.json") if state_path is not None else None
+        metadata_age = (
+            self._path_age_seconds(state_path.parent / "ppo" / str(self.experiment_name) / "metadata.json")
+            if state_path is not None
+            else None
+        )
         checkpoint_age = self._checkpoint_age_seconds()
         state_age = self._path_age_seconds(state_path) if state_path is not None else None
         lines.append(

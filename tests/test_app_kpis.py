@@ -98,7 +98,8 @@ class TestAppKpis(unittest.TestCase):
             root = Path(tmpdir)
             app.state_file = root / "ui_state.json"
             app.state_file.write_text("{}", encoding="utf-8")
-            metadata = app.state_file.parent / "ppo" / "v2" / "metadata.json"
+            metadata = app.state_file.parent / "ppo" / "baseline" / "metadata.json"
+            app.experiment_name = "baseline"
             metadata.parent.mkdir(parents=True, exist_ok=True)
             metadata.write_text("{}", encoding="utf-8")
             app._train_rate_last_time_s = 0.0

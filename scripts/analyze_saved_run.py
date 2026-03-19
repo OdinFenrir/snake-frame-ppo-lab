@@ -27,7 +27,7 @@ def _format_pct(value: float) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze saved PPO run diagnostics.")
-    parser.add_argument("--artifact-dir", type=str, default="state/ppo/v2")
+    parser.add_argument("--artifact-dir", type=str, default="state/ppo/baseline")
     parser.add_argument("--requested-steps", type=int, default=0)
     parser.add_argument("--run-id", type=str, default="")
     args = parser.parse_args()
