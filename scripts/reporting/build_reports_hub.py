@@ -98,6 +98,52 @@ def _training_input_summary(training_input_dir: Path) -> list[str]:
     return lines
 
 
+def _agent_performance_summary(agent_dir: Path) -> list[str]:
+    lines: list[str] = []
+    latest_json = agent_dir / "agent_performance_latest.json"
+    latest_md = agent_dir / "agent_performance_latest.md"
+    latest_csv = agent_dir / "agent_performance_rows_latest.csv"
+    latest_dashboard = agent_dir / "agent_performance_dashboard_latest.html"
+
+    report = _read_json(latest_json)
+    episodes = dict(report.get("episodes", {})) if isinstance(report.get("episodes"), dict) else {}
+    control = dict(report.get("agent_control", {})) if isinstance(report.get("agent_control"), dict) else {}
+    checks = list(report.get("checks", [])) if isinstance(report.get("checks"), list) else []
+    ok_count = sum(1 for c in checks if isinstance(c, dict) and bool(c.get("ok")))
+    fail_count = sum(1 for c in checks if isinstance(c, dict) and not bool(c.get("ok")))
+
+    lines.append("## Agent Performance")
+    lines.append(f"- JSON: `{_fmt(latest_json if latest_json.exists() else None)}`")
+    lines.append(f"- Markdown: `{_fmt(latest_md if latest_md.exists() else None)}`")
+    lines.append(f"- Rows CSV: `{_fmt(latest_csv if latest_csv.exists() else None)}`")
+    lines.append(f"- Dashboard HTML: `{_fmt(latest_dashboard if latest_dashboard.exists() else None)}`")
+    lines.append("")
+    lines.append("### Copy/Paste Summary")
+    lines.append("```text")
+    lines.append(f"run_id={report.get('run_id', '')}")
+    lines.append(
+        "episodes count={count} score_mean={mean:.3f} score_best={best} score_last={last} trend={trend}".format(
+            count=int(episodes.get("count", 0) or 0),
+            mean=float(episodes.get("score_mean", 0.0) or 0.0),
+            best=int(episodes.get("score_best", 0) or 0),
+            last=int(episodes.get("score_last", 0) or 0),
+            trend=episodes.get("score_trend", "unknown"),
+        )
+    )
+    lines.append(
+        "agent_control interventions_mean_pct={pct:.3f} interventions_total={it} decisions_total={dt} risk_total_last={risk}".format(
+            pct=float(control.get("interventions_pct_mean", 0.0) or 0.0),
+            it=int(control.get("interventions_delta_total", 0) or 0),
+            dt=int(control.get("decisions_delta_total", 0) or 0),
+            risk=int(control.get("risk_total_last", 0) or 0),
+        )
+    )
+    lines.append(f"checks ok={ok_count} fail={fail_count}")
+    lines.append("```")
+    lines.append("")
+    return lines
+
+
 def _generic_category_lines(title: str, dir_path: Path) -> list[str]:
     lines = [f"## {title}"]
     if not dir_path.exists():
@@ -122,6 +168,7 @@ def _generic_category_lines(title: str, dir_path: Path) -> list[str]:
 
 def build_hub(artifacts_root: Path, out_dir: Path) -> tuple[Path, Path]:
     training_input_dir = artifacts_root / "training_input"
+    agent_performance_dir = artifacts_root / "agent_performance"
     live_eval_dir = artifacts_root / "live_eval"
     share_dir = artifacts_root / "share"
     generated_utc = datetime.now(timezone.utc).isoformat()
@@ -133,6 +180,7 @@ def build_hub(artifacts_root: Path, out_dir: Path) -> tuple[Path, Path]:
     lines.append(f"- Artifacts root: `{artifacts_root}`")
     lines.append("")
     lines.extend(_training_input_summary(training_input_dir))
+    lines.extend(_agent_performance_summary(agent_performance_dir))
     lines.extend(_generic_category_lines("Live Eval", live_eval_dir))
     lines.extend(_generic_category_lines("Share", share_dir))
 

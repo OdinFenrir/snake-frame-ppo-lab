@@ -217,6 +217,7 @@ Useful scripts:
 - `scripts/blind_spot_replay.py`
 - `scripts/blind_spot_replay_view.py`
 - `scripts/training_input/build_training_input_report.py` (training-input-only report)
+- `scripts/agent_performance/build_agent_performance_report.py` (agent-performance-only report)
 
 Controller suite contract (automatic):
 - `controller_on` summaries now emit:
@@ -248,6 +249,16 @@ Training-input report one-shot (Windows):
   - `artifacts/training_input/training_input_timeline_latest.md`
   - `artifacts/training_input/training_input_timeline_latest.csv`
   - `artifacts/training_input/training_input_dashboard_latest.html` (interactive charts)
+  - `artifacts/reports/reports_hub_latest.md` (single organized hub)
+  - `artifacts/reports/reports_hub_latest.txt` (plain-text copy/paste)
+
+Agent-performance report one-shot (Windows):
+- `run_agent_performance_report.bat`
+- Generates:
+  - `artifacts/agent_performance/agent_performance_latest.json`
+  - `artifacts/agent_performance/agent_performance_latest.md`
+  - `artifacts/agent_performance/agent_performance_rows_latest.csv`
+  - `artifacts/agent_performance/agent_performance_dashboard_latest.html` (interactive charts)
   - `artifacts/reports/reports_hub_latest.md` (single organized hub)
   - `artifacts/reports/reports_hub_latest.txt` (plain-text copy/paste)
 
