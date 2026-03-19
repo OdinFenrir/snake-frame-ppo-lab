@@ -1,33 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import subprocess
 import threading
 from typing import Literal
+import webbrowser
 
 import pygame
 
+from .analysis_tool_catalog import ToolSpec, build_tools
+from .analysis_tool_commands import build_tool_commands, list_experiments, project_root
+from .analysis_tool_runner import pick_first_existing_output, read_output_preview, run_commands
 from .theme import get_theme, normalize_theme_name
 
 WelcomeRoute = Literal["live_training", "settings"]
 ScreenState = Literal["menu", "tools", "viewer"]
 
 
-@dataclass(frozen=True)
-class ToolSpec:
-    key: str
-    label: str
-    category: str
-    description: str
-    command: tuple[str, ...]
-    outputs: tuple[str, ...]
-    embeddable: bool
-
-
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return project_root()
 
 
 def _load_saved_theme_name() -> str:
@@ -81,330 +73,34 @@ def _fit_text(font: pygame.font.Font, text: str, max_width: int) -> str:
     return out + "…"
 
 
-def _build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
-    return [
-        ToolSpec(
-            key="training_input",
-            label="Training Quality Report",
-            category="Reports",
-            description="Model-side training quality, checkpoints, and timeline dashboard",
-            command=(),
-            outputs=(
-                "artifacts/training_input/training_input_latest.md",
-                "artifacts/reports/reports_hub_latest.txt",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="agent_performance",
-            label="Agent Runtime Report",
-            category="Reports",
-            description="Runtime behavior quality and intervention metrics",
-            command=(),
-            outputs=(
-                "artifacts/agent_performance/agent_performance_latest.md",
-                "artifacts/reports/reports_hub_latest.txt",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="phase3_compare",
-            label="Model vs Model Compare",
-            category="Reports",
-            description=f"Compare model+agent between saves ({left_exp} vs {right_exp})",
-            command=(),
-            outputs=(
-                "artifacts/phase3_compare/model_agent_compare_latest.md",
-                "artifacts/reports/reports_hub_latest.txt",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="blind_spot",
-            label="Failure Replay",
-            category="Diagnostics",
-            description="Replay and summarize worst failure traces",
-            command=(),
-            outputs=(
-                "artifacts/live_eval/blind_spot_replay_latest.json",
-                "artifacts/live_eval/blind_spot_replay_latest.html",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="postrun_suite",
-            label="Evaluation Suite",
-            category="Diagnostics",
-            description="Build post-run diagnostics bundle for the selected model",
-            command=(),
-            outputs=(
-                "artifacts/share/diagnostics_bundle.json",
-                "artifacts/share/diagnostics_bundle.md",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="policy_3d",
-            label="Policy 3D Explorer",
-            category="Model Views",
-            description="Launch 3D policy visualization",
-            command=(),
-            outputs=("artifacts/share/policy_3d_latest.html",),
-            embeddable=False,
-        ),
-        ToolSpec(
-            key="netron",
-            label="Model Graph (Netron)",
-            category="Model Views",
-            description="Open model graph with Netron",
-            command=(),
-            outputs=(),
-            embeddable=False,
-        ),
-    ]
-
-
-def _python_exe(root: Path) -> str:
-    venv_py = root / ".venv" / "Scripts" / "python.exe"
-    if venv_py.exists():
-        return str(venv_py)
-    return "python"
-
-
-def _resolve_model_path(root: Path, exp_name: str) -> Path:
-    preferred = root / "state" / "ppo" / exp_name / "best_score_model.zip"
-    if preferred.exists():
-        return preferred
-    fallback = root / "state" / "ppo" / exp_name / "best_model.zip"
-    if fallback.exists():
-        return fallback
-    return preferred
-
-
-def _resolve_tool_commands(spec: ToolSpec, *, left_exp: str, right_exp: str) -> list[tuple[str, ...]]:
-    root = _project_root()
-    py = _python_exe(root)
-    if spec.key == "training_input":
-        return [
-            (
-                py,
-                "scripts/training_input/build_training_input_report.py",
-                "--artifact-dir",
-                f"state/ppo/{left_exp}",
-                "--out-dir",
-                "artifacts/training_input",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/training_input/build_training_input_timeline.py",
-                "--artifact-dir",
-                f"state/ppo/{left_exp}",
-                "--out-dir",
-                "artifacts/training_input",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/training_input/build_training_input_visuals.py",
-                "--in-dir",
-                "artifacts/training_input",
-                "--out-dir",
-                "artifacts/training_input",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/reporting/build_reports_hub.py",
-                "--artifacts-root",
-                "artifacts",
-                "--out-dir",
-                "artifacts/reports",
-            ),
-        ]
-    if spec.key == "agent_performance":
-        return [
-            (
-                py,
-                "scripts/agent_performance/build_agent_performance_report.py",
-                "--artifact-dir",
-                f"state/ppo/{left_exp}",
-                "--out-dir",
-                "artifacts/agent_performance",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/agent_performance/build_agent_performance_visuals.py",
-                "--in-dir",
-                "artifacts/agent_performance",
-                "--out-dir",
-                "artifacts/agent_performance",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/reporting/build_reports_hub.py",
-                "--artifacts-root",
-                "artifacts",
-                "--out-dir",
-                "artifacts/reports",
-            ),
-        ]
-    if spec.key == "phase3_compare":
-        return [
-            (
-                py,
-                "scripts/phase3_compare/build_model_agent_compare_report.py",
-                "--left-exp",
-                left_exp,
-                "--right-exp",
-                right_exp,
-                "--out-dir",
-                "artifacts/phase3_compare",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/phase3_compare/build_model_agent_compare_visuals.py",
-                "--in-dir",
-                "artifacts/phase3_compare",
-                "--out-dir",
-                "artifacts/phase3_compare",
-                "--tag",
-                "latest",
-                "--retain-stamped",
-                "5",
-            ),
-            (
-                py,
-                "scripts/reporting/build_reports_hub.py",
-                "--artifacts-root",
-                "artifacts",
-                "--out-dir",
-                "artifacts/reports",
-            ),
-        ]
-    if spec.key == "blind_spot":
-        return [
-            (
-                py,
-                "scripts/blind_spot_replay.py",
-                "--trace-root",
-                "artifacts/live_eval/focused_traces",
-                "--latest-only",
-                "--min-confidence",
-                "0.7",
-                "--max-steps-to-death",
-                "10",
-                "--replay-window",
-                "30",
-                "--max-spots",
-                "50",
-                "--require-death",
-                "--out",
-                "artifacts/live_eval/blind_spot_replay_latest.json",
-            ),
-            (
-                py,
-                "scripts/blind_spot_replay_view.py",
-                "--input",
-                "artifacts/live_eval/blind_spot_replay_latest.json",
-                "--out",
-                "artifacts/live_eval/blind_spot_replay_latest.html",
-            ),
-        ]
-    if spec.key == "postrun_suite":
-        return [
-            (
-                py,
-                "scripts/post_run_suite.py",
-                "--artifact-dir",
-                f"state/ppo/{left_exp}",
-                "--artifacts-root",
-                "artifacts",
-                "--out-dir",
-                "artifacts/share",
-                "--print-summary",
-            )
-        ]
-    if spec.key in ("policy_3d", "netron"):
-        model_path = _resolve_model_path(root, left_exp)
-        if spec.key == "policy_3d":
-            return [
-                (
-                    py,
-                    "scripts/view_policy_3d.py",
-                    "--model",
-                    str(model_path),
-                    "--episodes",
-                    "8",
-                    "--max-steps",
-                    "800",
-                    "--max-points",
-                    "4000",
-                    "--out",
-                    "artifacts/share/policy_3d_latest.html",
-                )
-            ]
-        netron_exe = root / ".venv" / "Scripts" / "netron.exe"
-        trace_out = root / "artifacts" / "netron" / "policy_trace.pt"
-        return [
-            (
-                py,
-                "scripts/export_policy_trace.py",
-                "--model",
-                str(model_path),
-                "--out",
-                str(trace_out),
-            ),
-            (str(netron_exe), str(trace_out), "-b"),
-        ]
-    return []
-
-
-def _read_output_preview(path: Path, *, max_lines: int = 180) -> str:
-    if not path.exists():
-        return f"Missing output: {path}"
-    suffix = path.suffix.lower()
+def _open_html_in_browser(path: Path) -> None:
+    if path.suffix.lower() != ".html":
+        return
     try:
-        if suffix in (".md", ".txt", ".log", ".csv", ".jsonl"):
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            return "\n".join(lines[:max_lines]) if lines else "(empty file)"
-        if suffix == ".json":
-            payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-            return json.dumps(payload, indent=2)[:24000]
-        if suffix == ".html":
-            return f"HTML output generated:\n{path}\n\nOpen externally for full interactive view."
-        return f"Output generated:\n{path}"
-    except Exception as exc:
-        return f"Failed reading output: {path}\n{exc}"
+        webbrowser.open(path.resolve().as_uri())
+    except Exception:
+        # Browser launch failure should not break in-app viewer flow.
+        pass
 
 
-def _list_experiments() -> list[str]:
-    root = _project_root() / "state" / "ppo"
-    if not root.exists():
-        return ["baseline"]
-    names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-    return names or ["baseline"]
+def _copy_text_to_clipboard(text: str) -> bool:
+    payload = text or ""
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(payload)
+        root.update()
+        root.destroy()
+        return True
+    except Exception:
+        try:
+            proc = subprocess.run(["clip"], input=payload, text=True, capture_output=True, check=False)
+            return proc.returncode == 0
+        except Exception:
+            return False
 
 
 def show_welcome_window() -> WelcomeRoute | None:
@@ -417,7 +113,7 @@ def show_welcome_window() -> WelcomeRoute | None:
 
     root = _project_root()
     theme = get_theme(_load_saved_theme_name())
-    experiments = _list_experiments()
+    experiments = list_experiments(root)
     left_idx = 0
     right_idx = 1 if len(experiments) > 1 else 0
 
@@ -445,27 +141,10 @@ def show_welcome_window() -> WelcomeRoute | None:
         def _run() -> None:
             nonlocal worker_running, status_text, worker_result, viewer_text, viewer_title, screen_state, viewer_scroll
             try:
-                cmds = _resolve_tool_commands(spec, left_exp=left_exp, right_exp=right_exp)
-                merged_chunks: list[str] = []
-                for cmd in cmds:
-                    proc = subprocess.run(
-                        list(cmd),
-                        cwd=str(root),
-                        capture_output=True,
-                        text=True,
-                        shell=False,
-                        timeout=60 * 60,
-                    )
-                    out = (proc.stdout or "").strip()
-                    err = (proc.stderr or "").strip()
-                    block = "\n".join([x for x in [out, err] if x]).strip()
-                    if block:
-                        merged_chunks.append(f"$ {' '.join(cmd)}\n{block}")
-                    if proc.returncode != 0:
-                        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}")
-                merged = "\n\n".join(merged_chunks).strip()
+                cmds = build_tool_commands(spec, left_exp=left_exp, right_exp=right_exp)
+                merged = run_commands(cmds, root=root, timeout_s=60 * 60)
                 with worker_lock:
-                    worker_result = merged if merged else "(no console output)"
+                    worker_result = merged
                     worker_running = False
                     status_text = f"Finished: {spec.label}"
             except Exception as exc:
@@ -475,26 +154,34 @@ def show_welcome_window() -> WelcomeRoute | None:
                     status_text = f"Failed: {spec.label}"
 
             # Auto-load latest embeddable output into viewer after completion.
-            opened_output = False
-            for rel in spec.outputs:
-                path = root / rel
-                if path.exists():
-                    viewer_title = f"{spec.label} - {path.name}"
-                    viewer_text = _read_output_preview(path)
-                    viewer_scroll = 0
-                    screen_state = "viewer"
-                    opened_output = True
-                    break
-            if not opened_output:
+            output_path = pick_first_existing_output(root, spec.outputs)
+            if output_path is not None:
+                if output_path.suffix.lower() == ".html":
+                    with worker_lock:
+                        status_text = f"Opening {spec.label} in browser (loading...)"
+                    _open_html_in_browser(output_path)
+                    with worker_lock:
+                        status_text = f"{spec.label} opened. Browser may still be loading large data."
+                viewer_title = f"{spec.label} - {output_path.name}"
+                viewer_text = read_output_preview(output_path)
+                viewer_scroll = 0
+                screen_state = "viewer"
+            else:
                 viewer_title = f"{spec.label} - Run Result"
                 viewer_text = worker_result if worker_result else "Tool finished with no output file."
                 viewer_scroll = 0
                 screen_state = "viewer"
+                if spec.key == "netron":
+                    with worker_lock:
+                        status_text = "Netron launched. Browser/model graph may still be loading."
 
         with worker_lock:
             worker_running = True
             worker_result = ""
-            status_text = f"Running: {spec.label}"
+            if spec.key in ("policy_3d", "netron"):
+                status_text = f"Running: {spec.label} (building/opening, may take a while)"
+            else:
+                status_text = f"Running: {spec.label}"
         worker = threading.Thread(target=_run, daemon=True)
         worker.start()
 
@@ -514,7 +201,7 @@ def show_welcome_window() -> WelcomeRoute | None:
 
         left_exp = experiments[left_idx]
         right_exp = experiments[right_idx]
-        tools = _build_tools(left_exp=left_exp, right_exp=right_exp)
+        tools = build_tools(left_exp=left_exp, right_exp=right_exp)
         if selected_tool_idx >= len(tools):
             selected_tool_idx = max(0, len(tools) - 1)
         active_tool = tools[selected_tool_idx]
@@ -590,6 +277,7 @@ def show_welcome_window() -> WelcomeRoute | None:
         tools_view_btn = pygame.Rect(tools_run_btn.right + 10, tools_run_btn.y, 138, tools_btn_h)
         tools_back_btn = pygame.Rect(win_w - 108, 18, 86, 30)
         viewer_back_btn = pygame.Rect(win_w - 108, 20, 86, 30)
+        viewer_copy_btn = pygame.Rect(viewer_back_btn.x - 102, 20, 92, 30)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -629,17 +317,17 @@ def show_welcome_window() -> WelcomeRoute | None:
                         _launch_tool(tools[selected_tool_idx])
                     elif tools_view_btn.collidepoint(event.pos):
                         spec = tools[selected_tool_idx]
-                        loaded = False
-                        for rel in spec.outputs:
-                            out_path = root / rel
-                            if out_path.exists():
-                                viewer_title = f"{spec.label} - {out_path.name}"
-                                viewer_text = _read_output_preview(out_path)
-                                viewer_scroll = 0
-                                screen_state = "viewer"
-                                loaded = True
-                                break
-                        if not loaded:
+                        out_path = pick_first_existing_output(root, spec.outputs)
+                        if out_path is not None:
+                            if out_path.suffix.lower() == ".html":
+                                status_text = f"Opening {spec.label} in browser (loading...)"
+                                _open_html_in_browser(out_path)
+                                status_text = f"{spec.label} opened. Browser may still be loading large data."
+                            viewer_title = f"{spec.label} - {out_path.name}"
+                            viewer_text = read_output_preview(out_path)
+                            viewer_scroll = 0
+                            screen_state = "viewer"
+                        else:
                             viewer_title = spec.label
                             viewer_text = "No output file found yet.\nRun the tool first."
                             viewer_scroll = 0
@@ -654,6 +342,9 @@ def show_welcome_window() -> WelcomeRoute | None:
                         right_idx = (right_idx + 1) % len(experiments)
                 if screen_state == "viewer" and event.button == 1 and viewer_back_btn.collidepoint(event.pos):
                     screen_state = "tools"
+                elif screen_state == "viewer" and event.button == 1 and viewer_copy_btn.collidepoint(event.pos):
+                    ok = _copy_text_to_clipboard(viewer_text)
+                    status_text = "Copied viewer output to clipboard." if ok else "Copy failed."
             elif event.type == pygame.MOUSEBUTTONUP:
                 mouse_down_y = None
             elif event.type == pygame.MOUSEMOTION and screen_state == "viewer" and mouse_down_y is not None:
@@ -692,17 +383,17 @@ def show_welcome_window() -> WelcomeRoute | None:
                         _launch_tool(tools[selected_tool_idx])
                     elif event.key in (pygame.K_RETURN, pygame.K_v):
                         spec = tools[selected_tool_idx]
-                        loaded = False
-                        for rel in spec.outputs:
-                            out_path = root / rel
-                            if out_path.exists():
-                                viewer_title = f"{spec.label} - {out_path.name}"
-                                viewer_text = _read_output_preview(out_path)
-                                viewer_scroll = 0
-                                screen_state = "viewer"
-                                loaded = True
-                                break
-                        if not loaded:
+                        out_path = pick_first_existing_output(root, spec.outputs)
+                        if out_path is not None:
+                            if out_path.suffix.lower() == ".html":
+                                status_text = f"Opening {spec.label} in browser (loading...)"
+                                _open_html_in_browser(out_path)
+                                status_text = f"{spec.label} opened. Browser may still be loading large data."
+                            viewer_title = f"{spec.label} - {out_path.name}"
+                            viewer_text = read_output_preview(out_path)
+                            viewer_scroll = 0
+                            screen_state = "viewer"
+                        else:
                             viewer_title = spec.label
                             viewer_text = "No output file found yet.\nPress R to run tool first."
                             viewer_scroll = 0
@@ -710,6 +401,9 @@ def show_welcome_window() -> WelcomeRoute | None:
                 elif screen_state == "viewer":
                     if event.key == pygame.K_ESCAPE:
                         screen_state = "tools"
+                    elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
+                        ok = _copy_text_to_clipboard(viewer_text)
+                        status_text = "Copied viewer output to clipboard." if ok else "Copy failed."
                     elif event.key == pygame.K_UP:
                         viewer_scroll = max(0, viewer_scroll - 24)
                     elif event.key == pygame.K_DOWN:
@@ -746,10 +440,10 @@ def show_welcome_window() -> WelcomeRoute | None:
                     border=_shade(theme.panel_border, 28 if hovered else 0),
                     width=2 if hovered else 1,
                 )
-                l = item_font.render(label, True, theme.section_header)
-                s = body_font.render(_fit_text(body_font, sub, rect.width - 40), True, theme.status_secondary)
-                surface.blit(l, (rect.x + 18, rect.y + max(10, int(rect.height * 0.14))))
-                surface.blit(s, (rect.x + 18, rect.y + max(46, int(rect.height * 0.47))))
+                label_surf = item_font.render(label, True, theme.section_header)
+                sub_surf = body_font.render(_fit_text(body_font, sub, rect.width - 40), True, theme.status_secondary)
+                surface.blit(label_surf, (rect.x + 18, rect.y + max(10, int(rect.height * 0.14))))
+                surface.blit(sub_surf, (rect.x + 18, rect.y + max(46, int(rect.height * 0.47))))
                 key = small_font.render(f"[{idx + 1}]", True, theme.badge_text)
                 surface.blit(key, (rect.right - key.get_width() - 16, rect.y + 12))
 
@@ -829,7 +523,10 @@ def show_welcome_window() -> WelcomeRoute | None:
             emb_surf = small_font.render(emb, True, theme.status_color)
             surface.blit(emb_surf, (right_rect.x + 12, detail_y + 74))
 
-            resolved_cmds = _resolve_tool_commands(sel, left_exp=left_exp, right_exp=right_exp)
+            try:
+                resolved_cmds = build_tool_commands(sel, left_exp=left_exp, right_exp=right_exp)
+            except Exception:
+                resolved_cmds = []
             if resolved_cmds:
                 cmd = " ; ".join(" ".join(step) for step in resolved_cmds[:2])
                 if len(resolved_cmds) > 2:
@@ -921,10 +618,23 @@ def show_welcome_window() -> WelcomeRoute | None:
 
             t = item_font.render(viewer_title or "Tool Output", True, theme.section_header)
             surface.blit(t, (header_rect.x + 12, header_rect.y + 10))
-            hint_x_max = viewer_back_btn.x - 10
-            hint_text = _fit_text(small_font, "Esc back  Scroll mouse / PgUp/PgDn", max(80, hint_x_max - (header_rect.x + 260)))
+            hint_x_max = viewer_copy_btn.x - 10
+            hint_text = _fit_text(small_font, "Esc back  Scroll mouse / PgUp/PgDn  Ctrl+C copy", max(80, hint_x_max - (header_rect.x + 260)))
             hint = small_font.render(hint_text, True, theme.status_secondary)
             surface.blit(hint, (hint_x_max - hint.get_width(), header_rect.y + 16))
+
+            copy_hovered = viewer_copy_btn.collidepoint(mouse_pos)
+            _draw_box(
+                surface,
+                viewer_copy_btn,
+                bg=_shade(theme.panel_bg, 14 if copy_hovered else 8),
+                border=_shade(theme.panel_border, 24 if copy_hovered else 0),
+                width=2 if copy_hovered else 1,
+                radius=8,
+            )
+            copy_txt = action_btn_font.render("Copy All", True, theme.badge_text)
+            surface.blit(copy_txt, (viewer_copy_btn.centerx - copy_txt.get_width() // 2, viewer_copy_btn.y + (viewer_copy_btn.height - copy_txt.get_height()) // 2))
+
             back_hovered = viewer_back_btn.collidepoint(mouse_pos)
             _draw_box(
                 surface,
@@ -947,7 +657,9 @@ def show_welcome_window() -> WelcomeRoute | None:
             y = body_rect.y + 10 - int(viewer_scroll % line_h)
             max_lines = int(visible_h / line_h) + 3
             for i in range(start_line, min(len(lines), start_line + max_lines)):
-                rendered = body_font.render(lines[i][:220], True, theme.status_color)
+                max_w = max(120, body_rect.width - 34)
+                fitted = _fit_text(body_font, lines[i], max_w)
+                rendered = body_font.render(fitted, True, theme.status_color)
                 surface.blit(rendered, (body_rect.x + 12, y))
                 y += line_h
 

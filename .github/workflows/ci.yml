@@ -25,7 +25,11 @@ jobs:
 
       - name: Lint
         shell: pwsh
-        run: python -m ruff check snake_frame tests main.py
+        run: python -m ruff check scripts snake_frame tests main.py
+
+      - name: Contract + Orchestration Tests
+        shell: pwsh
+        run: python -m pytest -q tests/test_reporting_common.py tests/test_report_contracts.py tests/test_analysis_tool_orchestration.py
 
       - name: Tests
         shell: pwsh

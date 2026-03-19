@@ -1427,7 +1427,6 @@ class GameplayController:
             if eval_result is None:
                 continue
             score, tail_ok, shortfall = eval_result
-            candidate_head = analysis.candidate_head
             revisit_count = int(analysis.revisit_count)
             next_food_dist = int(analysis.next_food_dist)
             food_progress = int(current_food_dist - next_food_dist)
@@ -1515,7 +1514,6 @@ class GameplayController:
             if eval_result is None:
                 continue
             score, tail_ok, shortfall = eval_result
-            candidate_head = analysis.candidate_head
             revisit_count = int(analysis.revisit_count)
             next_food_dist = int(analysis.next_food_dist)
             food_progress = int(current_food_dist - next_food_dist)

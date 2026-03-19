@@ -5,10 +5,37 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_AGENT_PERFORMANCE
+except ModuleNotFoundError:
+    import sys
+
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_AGENT_PERFORMANCE
 
 
 @dataclass(frozen=True)
@@ -18,67 +45,14 @@ class ReportPaths:
     out_dir: Path
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _resolve_default_artifact_dir(root: Path) -> Path:
-    ui_prefs = root / "state" / "ui_prefs.json"
-    active = "baseline"
-    if ui_prefs.exists():
-        payload = _read_json(ui_prefs)
-        active = str(payload.get("activeExperiment", "baseline") or "baseline").strip() or "baseline"
-    candidate = root / "state" / "ppo" / active
-    if candidate.exists():
-        return candidate.resolve()
-    return (root / "state" / "ppo" / "baseline").resolve()
-
-
 def _episode_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for row in rows:
-        episode = _safe_int(row.get("episode_index"), -1)
+        episode = safe_int(row.get("episode_index"), -1)
         if episode < 1:
             continue
         out.append(row)
-    out.sort(key=lambda r: _safe_int(r.get("episode_index")))
+    out.sort(key=lambda r: safe_int(r.get("episode_index")))
     return out
 
 
@@ -106,32 +80,32 @@ def _build_checks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return checks
 
-    episodes = [_safe_int(r.get("episode_index")) for r in rows]
+    episodes = [safe_int(r.get("episode_index")) for r in rows]
     monotonic = all(episodes[i] > episodes[i - 1] for i in range(1, len(episodes)))
     checks.append({"name": "episode_index_strictly_increasing", "ok": monotonic, "detail": f"first={episodes[0]} last={episodes[-1]}"})
 
     bad_pct = [
-        _safe_float(r.get("interventions_pct"))
+        safe_float(r.get("interventions_pct"))
         for r in rows
-        if _safe_float(r.get("interventions_pct")) < 0.0 or _safe_float(r.get("interventions_pct")) > 100.0
+        if safe_float(r.get("interventions_pct")) < 0.0 or safe_float(r.get("interventions_pct")) > 100.0
     ]
     checks.append({"name": "interventions_pct_in_0_100", "ok": len(bad_pct) == 0, "detail": f"invalid_rows={len(bad_pct)}"})
 
-    neg_decisions = [_safe_int(r.get("decisions_delta")) for r in rows if _safe_int(r.get("decisions_delta")) < 0]
-    neg_interventions = [_safe_int(r.get("interventions_delta")) for r in rows if _safe_int(r.get("interventions_delta")) < 0]
+    neg_decisions = [safe_int(r.get("decisions_delta")) for r in rows if safe_int(r.get("decisions_delta")) < 0]
+    neg_interventions = [safe_int(r.get("interventions_delta")) for r in rows if safe_int(r.get("interventions_delta")) < 0]
     checks.append({"name": "decision_deltas_non_negative", "ok": len(neg_decisions) == 0, "detail": f"invalid_rows={len(neg_decisions)}"})
     checks.append({"name": "intervention_deltas_non_negative", "ok": len(neg_interventions) == 0, "detail": f"invalid_rows={len(neg_interventions)}"})
     return checks
 
 
 def _build_report(paths: ReportPaths) -> dict[str, Any]:
-    metadata = _read_json(paths.artifact_dir / "metadata.json")
-    rows = _episode_rows(_read_jsonl(paths.run_log_path))
-    scores = [_safe_int(r.get("score")) for r in rows]
-    interventions_pct = [_safe_float(r.get("interventions_pct")) for r in rows]
-    decisions_delta = [_safe_int(r.get("decisions_delta")) for r in rows]
-    interventions_delta = [_safe_int(r.get("interventions_delta")) for r in rows]
-    risk_total_series = [_safe_int(r.get("risk_total")) for r in rows]
+    metadata = read_json(paths.artifact_dir / "metadata.json")
+    rows = _episode_rows(read_jsonl(paths.run_log_path))
+    scores = [safe_int(r.get("score")) for r in rows]
+    interventions_pct = [safe_float(r.get("interventions_pct")) for r in rows]
+    decisions_delta = [safe_int(r.get("decisions_delta")) for r in rows]
+    interventions_delta = [safe_int(r.get("interventions_delta")) for r in rows]
+    risk_total_series = [safe_int(r.get("risk_total")) for r in rows]
     risk_last = risk_total_series[-1] if risk_total_series else 0
 
     trend = "unknown"
@@ -214,33 +188,14 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     for row in rows:
         out.append(
             (
-                f"{_safe_int(row.get('episode_index'))},{_safe_int(row.get('score'))},{str(row.get('death_reason',''))},"
-                f"{str(row.get('mode',''))},{_safe_int(row.get('train_total_steps'))},{_safe_float(row.get('interventions_pct')):.6f},"
-                f"{_safe_int(row.get('interventions_delta'))},{_safe_int(row.get('decisions_delta'))},"
-                f"{_safe_int(row.get('risk_total'))},{_safe_int(row.get('stuck_episode_delta'))},"
-                f"{_safe_int(row.get('loop_escape_activations_total'))},{_safe_float(row.get('generated_at_unix_s')):.6f}\n"
+                f"{safe_int(row.get('episode_index'))},{safe_int(row.get('score'))},{str(row.get('death_reason',''))},"
+                f"{str(row.get('mode',''))},{safe_int(row.get('train_total_steps'))},{safe_float(row.get('interventions_pct')):.6f},"
+                f"{safe_int(row.get('interventions_delta'))},{safe_int(row.get('decisions_delta'))},"
+                f"{safe_int(row.get('risk_total'))},{safe_int(row.get('stuck_episode_delta'))},"
+                f"{safe_int(row.get('loop_escape_activations_total'))},{safe_float(row.get('generated_at_unix_s')):.6f}\n"
             )
         )
     path.write_text("".join(out), encoding="utf-8")
-
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -251,17 +206,26 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     artifact_dir = (
         (root / args.artifact_dir).resolve()
         if str(args.artifact_dir or "").strip()
-        else _resolve_default_artifact_dir(root)
+        else resolve_default_artifact_dir(root)
     )
+    out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_AGENT_PERFORMANCE, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     paths = ReportPaths(
         artifact_dir=artifact_dir,
         run_log_path=(root / args.run_log).resolve(),
-        out_dir=(root / args.out_dir).resolve(),
+        out_dir=out_dir,
     )
     report = _build_report(paths)
     paths.out_dir.mkdir(parents=True, exist_ok=True)
@@ -284,19 +248,19 @@ def main() -> None:
     json_latest.write_text(json_text, encoding="utf-8")
     md_latest.write_text(md_text, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="agent_performance",
         suffix=".json",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="agent_performance",
         suffix=".md",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="agent_performance_rows",
         suffix=".csv",

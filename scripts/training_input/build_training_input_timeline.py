@@ -9,84 +9,39 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
+except ModuleNotFoundError:
+    import sys
+
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
+
 
 _STEP_MODEL_RE = re.compile(r"^step_(\d+)_steps\.zip$", re.IGNORECASE)
 _STEP_VEC_RE = re.compile(r"^step_vecnormalize_(\d+)_steps\.pkl$", re.IGNORECASE)
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
-
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
-
-
-def _resolve_default_artifact_dir(root: Path) -> Path:
-    ui_prefs = root / "state" / "ui_prefs.json"
-    active = "baseline"
-    if ui_prefs.exists():
-        payload = _read_json(ui_prefs)
-        active = str(payload.get("activeExperiment", "baseline") or "baseline").strip() or "baseline"
-    candidate = root / "state" / "ppo" / active
-    if candidate.exists():
-        return candidate.resolve()
-    return (root / "state" / "ppo" / "baseline").resolve()
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            parsed = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(parsed, dict):
-            rows.append(parsed)
-    return rows
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
-
-
 def _fmt_utc(ts: float | None) -> str:
     if ts is None:
         return ""
@@ -106,7 +61,7 @@ def _load_vec_stats(path: Path) -> dict[str, float]:
         obs_rms = getattr(obj, "obs_rms", None)
         mean = np.asarray(getattr(obs_rms, "mean", np.asarray([], dtype=np.float64)), dtype=np.float64)
         var = np.asarray(getattr(obs_rms, "var", np.asarray([], dtype=np.float64)), dtype=np.float64)
-        count = _safe_float(getattr(obs_rms, "count", 0.0))
+        count = safe_float(getattr(obs_rms, "count", 0.0))
         if mean.ndim == 0:
             mean = mean.reshape(1)
         if var.ndim == 0:
@@ -124,8 +79,8 @@ def _load_vec_stats(path: Path) -> dict[str, float]:
 
 def build_timeline(artifact_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     checkpoints_dir = artifact_dir / "checkpoints"
-    eval_trace = _read_jsonl(artifact_dir / "eval_logs" / "evaluations_trace.jsonl")
-    metadata = _read_json(artifact_dir / "metadata.json")
+    eval_trace = read_jsonl(artifact_dir / "eval_logs" / "evaluations_trace.jsonl")
+    metadata = read_json(artifact_dir / "metadata.json")
 
     model_steps: set[int] = set()
     vec_paths: dict[int, Path] = {}
@@ -143,7 +98,7 @@ def build_timeline(artifact_dir: Path) -> tuple[list[dict[str, Any]], dict[str, 
 
     eval_by_step: dict[int, dict[str, Any]] = {}
     for row in eval_trace:
-        step = _safe_int(row.get("step"), -1)
+        step = safe_int(row.get("step"), -1)
         if step < 0:
             continue
         eval_by_step[step] = row
@@ -166,25 +121,25 @@ def build_timeline(artifact_dir: Path) -> tuple[list[dict[str, Any]], dict[str, 
                 "has_model_checkpoint": bool(step in model_steps),
                 "has_vecnormalize_checkpoint": bool(vec_path is not None),
                 "vec_file": "" if vec_path is None else vec_path.name,
-                "vec_obs_count": _safe_float(vec_stats.get("obs_count")),
-                "vec_obs_mean_abs_avg": _safe_float(vec_stats.get("obs_mean_abs_avg")),
-                "vec_obs_var_avg": _safe_float(vec_stats.get("obs_var_avg")),
-                "vec_obs_var_max": _safe_float(vec_stats.get("obs_var_max")),
-                "eval_mean_reward": (_safe_float(eval_row.get("mean_reward")) if has_eval_point else None),
-                "eval_mean_score": (_safe_float(eval_row.get("mean_score")) if has_eval_point else None),
-                "eval_run_index": (_safe_int(eval_row.get("eval_run_index")) if has_eval_point else None),
+                "vec_obs_count": safe_float(vec_stats.get("obs_count")),
+                "vec_obs_mean_abs_avg": safe_float(vec_stats.get("obs_mean_abs_avg")),
+                "vec_obs_var_avg": safe_float(vec_stats.get("obs_var_avg")),
+                "vec_obs_var_max": safe_float(vec_stats.get("obs_var_max")),
+                "eval_mean_reward": (safe_float(eval_row.get("mean_reward")) if has_eval_point else None),
+                "eval_mean_score": (safe_float(eval_row.get("mean_score")) if has_eval_point else None),
+                "eval_run_index": (safe_int(eval_row.get("eval_run_index")) if has_eval_point else None),
             }
         )
 
     summary = {
         "latest_run_id": str(metadata.get("latest_run_id", "")),
-        "requested_total_timesteps": _safe_int(metadata.get("requested_total_timesteps")),
-        "actual_total_timesteps": _safe_int(metadata.get("actual_total_timesteps")),
+        "requested_total_timesteps": safe_int(metadata.get("requested_total_timesteps")),
+        "actual_total_timesteps": safe_int(metadata.get("actual_total_timesteps")),
         "checkpoint_steps_total": len(all_steps),
         "vec_checkpoint_count": len(vec_paths),
         "eval_trace_points": len(eval_by_step),
-        "best_eval_mean_reward": max((_safe_float(v.get("mean_reward")) for v in eval_by_step.values()), default=0.0),
-        "best_eval_mean_score": max((_safe_float(v.get("mean_score")) for v in eval_by_step.values()), default=0.0),
+        "best_eval_mean_reward": max((safe_float(v.get("mean_reward")) for v in eval_by_step.values()), default=0.0),
+        "best_eval_mean_score": max((safe_float(v.get("mean_score")) for v in eval_by_step.values()), default=0.0),
     }
     return timeline, summary
 
@@ -199,13 +154,13 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     for row in rows:
         lines.append(
             (
-                f"{_safe_int(row.get('step'))},{1 if row.get('has_model_checkpoint') else 0},"
+                f"{safe_int(row.get('step'))},{1 if row.get('has_model_checkpoint') else 0},"
                 f"{1 if row.get('has_vecnormalize_checkpoint') else 0},{row.get('vec_file','')},"
-                f"{_safe_float(row.get('vec_obs_count')):.6f},{_safe_float(row.get('vec_obs_mean_abs_avg')):.6f},"
-                f"{_safe_float(row.get('vec_obs_var_avg')):.6f},{_safe_float(row.get('vec_obs_var_max')):.6f},"
-                f"{'' if row.get('eval_mean_reward') is None else f'{_safe_float(row.get('eval_mean_reward')):.6f}'},"
-                f"{'' if row.get('eval_mean_score') is None else f'{_safe_float(row.get('eval_mean_score')):.6f}'},"
-                f"{'' if row.get('eval_run_index') is None else _safe_int(row.get('eval_run_index'))}\n"
+                f"{safe_float(row.get('vec_obs_count')):.6f},{safe_float(row.get('vec_obs_mean_abs_avg')):.6f},"
+                f"{safe_float(row.get('vec_obs_var_avg')):.6f},{safe_float(row.get('vec_obs_var_max')):.6f},"
+                f"{'' if row.get('eval_mean_reward') is None else f'{safe_float(row.get('eval_mean_reward')):.6f}'},"
+                f"{'' if row.get('eval_mean_score') is None else f'{safe_float(row.get('eval_mean_score')):.6f}'},"
+                f"{'' if row.get('eval_run_index') is None else safe_int(row.get('eval_run_index'))}\n"
             )
         )
     path.write_text("".join(lines), encoding="utf-8")
@@ -230,11 +185,11 @@ def _write_md(path: Path, artifact_dir: Path, summary: dict[str, Any], rows: lis
     for row in rows[-6:]:
         lines.append(
             "- step={step} vec_var_avg={vec_var_avg:.6f} vec_var_max={vec_var_max:.6f} eval_mean_reward={eval_mean_reward:.3f} eval_mean_score={eval_mean_score:.3f}".format(
-                step=_safe_int(row.get("step")),
-                vec_var_avg=_safe_float(row.get("vec_obs_var_avg")),
-                vec_var_max=_safe_float(row.get("vec_obs_var_max")),
-                eval_mean_reward=_safe_float(row.get("eval_mean_reward")),
-                eval_mean_score=_safe_float(row.get("eval_mean_score")),
+                step=safe_int(row.get("step")),
+                vec_var_avg=safe_float(row.get("vec_obs_var_avg")),
+                vec_var_max=safe_float(row.get("vec_obs_var_max")),
+                eval_mean_reward=safe_float(row.get("eval_mean_reward")),
+                eval_mean_score=safe_float(row.get("eval_mean_score")),
             )
         )
     lines.append("")
@@ -248,14 +203,22 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     artifact_dir = (
         (root / args.artifact_dir).resolve()
         if str(args.artifact_dir or "").strip()
-        else _resolve_default_artifact_dir(root)
+        else resolve_default_artifact_dir(root)
     )
     out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_TRAINING_INPUT, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     out_dir.mkdir(parents=True, exist_ok=True)
 
     timeline, summary = build_timeline(artifact_dir)
@@ -282,19 +245,19 @@ def main() -> None:
     json_latest.write_text(json_text, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
     md_latest.write_text(md_stamp.read_text(encoding="utf-8"), encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="training_input_timeline",
         suffix=".json",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="training_input_timeline",
         suffix=".csv",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="training_input_timeline",
         suffix=".md",

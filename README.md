@@ -20,6 +20,7 @@ Use these docs directly from the main page:
 - [Operating Rules](OPERATING_RULES.md) - experiment isolation and comparison discipline
 - [Trusted Baselines](TRUSTED_BASELINES.md) - benchmark trust boundary and baseline references
 - [Changelog](CHANGELOG.md) - chronological project changes
+- [Report Tooling Contract](docs/REPORT_TOOLING_CONTRACT.md) - canonical paths, latest semantics, retention, CLI/failure rules
 
 ## Demo
 
@@ -315,6 +316,14 @@ Notes:
 - Retention prunes only stamped outputs for that report family.
 - `latest` files are never pruned.
 
+### Report Contract + Legacy Timeline
+
+- Canonical report locations and required outputs are defined in `docs/REPORT_TOOLING_CONTRACT.md`.
+- App workflow uses direct Python entrypoints; root `.bat` files remain compatibility helpers for manual runs.
+- Legacy write support ends: **2026-06-30 23:59 UTC**
+- Legacy read-fallback support removed: **2026-07-31 23:59 UTC**
+- After **2026-07-31 23:59 UTC**, old fallback paths are hard errors with migration hints.
+
 ## Evaluation Protocol + Baseline Tracking
 
 Protocol for comparable controller-vs-PPO checks:
@@ -335,7 +344,7 @@ Generate new baseline metrics from fresh suites in the `baseline` experiment bef
 ## Validation Commands (Local)
 
 - Lint:
-  - `.venv\Scripts\python.exe -m ruff check snake_frame tests main.py`
+  - `.venv\Scripts\python.exe -m ruff check scripts snake_frame tests main.py`
 - Full tests:
   - `.venv\Scripts\python.exe -m pytest -q`
 - Determinism:

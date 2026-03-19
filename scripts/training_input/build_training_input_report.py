@@ -11,68 +11,44 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
+except ModuleNotFoundError:
+    import sys
+
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        resolve_default_artifact_dir,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
+
 
 _STEP_VEC_RE = re.compile(r"^step_vecnormalize_(\d+)_steps\.pkl$", re.IGNORECASE)
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
 
 
 @dataclass(frozen=True)
 class ReportPaths:
     artifact_dir: Path
     out_dir: Path
-
-
-def _resolve_default_artifact_dir(root: Path) -> Path:
-    ui_prefs = root / "state" / "ui_prefs.json"
-    active = "baseline"
-    if ui_prefs.exists():
-        payload = _read_json(ui_prefs)
-        active = str(payload.get("activeExperiment", "baseline") or "baseline").strip() or "baseline"
-    candidate = root / "state" / "ppo" / active
-    if candidate.exists():
-        return candidate.resolve()
-    return (root / "state" / "ppo" / "baseline").resolve()
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(row, dict):
-            out.append(row)
-    return out
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
 
 
 def _format_ts(unix_s: float | int | None) -> str:
@@ -96,7 +72,7 @@ def _load_vecnormalize(path: Path) -> dict[str, Any]:
     obs_rms = getattr(obj, "obs_rms", None)
     mean = np.asarray(getattr(obs_rms, "mean", np.asarray([], dtype=np.float64)), dtype=np.float64)
     var = np.asarray(getattr(obs_rms, "var", np.asarray([], dtype=np.float64)), dtype=np.float64)
-    count = _safe_float(getattr(obs_rms, "count", 0.0))
+    count = safe_float(getattr(obs_rms, "count", 0.0))
     if mean.ndim == 0:
         mean = mean.reshape(1)
     if var.ndim == 0:
@@ -124,10 +100,10 @@ def _load_vecnormalize(path: Path) -> dict[str, Any]:
         "obs_var_avg": float(var.mean()) if var.size > 0 else 0.0,
         "obs_var_min": float(var.min()) if var.size > 0 else 0.0,
         "obs_var_max": float(var.max()) if var.size > 0 else 0.0,
-        "clip_obs": _safe_float(getattr(obj, "clip_obs", 0.0)),
-        "clip_reward": _safe_float(getattr(obj, "clip_reward", 0.0)),
-        "gamma": _safe_float(getattr(obj, "gamma", 0.0)),
-        "epsilon": _safe_float(getattr(obj, "epsilon", 0.0)),
+        "clip_obs": safe_float(getattr(obj, "clip_obs", 0.0)),
+        "clip_reward": safe_float(getattr(obj, "clip_reward", 0.0)),
+        "gamma": safe_float(getattr(obj, "gamma", 0.0)),
+        "epsilon": safe_float(getattr(obj, "epsilon", 0.0)),
         "norm_obs": bool(getattr(obj, "norm_obs", False)),
         "norm_reward": bool(getattr(obj, "norm_reward", False)),
         "top_features_by_abs_mean": feature_top,
@@ -148,11 +124,11 @@ def _checkpoint_vec_rows(checkpoints_dir: Path) -> list[dict[str, Any]]:
             {
                 "step": int(step),
                 "file": p.name,
-                "obs_dim": _safe_int(vec.get("obs_dim")),
-                "obs_count": _safe_float(vec.get("obs_count")),
-                "obs_mean_abs_avg": _safe_float(vec.get("obs_mean_abs_avg")),
-                "obs_var_avg": _safe_float(vec.get("obs_var_avg")),
-                "obs_var_max": _safe_float(vec.get("obs_var_max")),
+                "obs_dim": safe_int(vec.get("obs_dim")),
+                "obs_count": safe_float(vec.get("obs_count")),
+                "obs_mean_abs_avg": safe_float(vec.get("obs_mean_abs_avg")),
+                "obs_var_avg": safe_float(vec.get("obs_var_avg")),
+                "obs_var_max": safe_float(vec.get("obs_var_max")),
                 "mtime_utc": _format_ts(p.stat().st_mtime),
             }
         )
@@ -186,17 +162,17 @@ def _input_contract(metadata: dict[str, Any]) -> dict[str, Any]:
     obs_cfg = dict(metadata.get("obs_config", {})) if isinstance(metadata.get("obs_config"), dict) else {}
     reward_cfg = dict(metadata.get("reward_config", {})) if isinstance(metadata.get("reward_config"), dict) else {}
     return {
-        "env_count": _safe_int(cfg.get("env_count")),
-        "n_steps": _safe_int(cfg.get("n_steps")),
-        "batch_size": _safe_int(cfg.get("batch_size")),
-        "n_epochs": _safe_int(cfg.get("n_epochs")),
-        "gamma": _safe_float(cfg.get("gamma")),
-        "gae_lambda": _safe_float(cfg.get("gae_lambda")),
-        "learning_rate_start": _safe_float(cfg.get("learning_rate_start")),
-        "learning_rate_end": _safe_float(cfg.get("learning_rate_end")),
-        "clip_range": _safe_float(cfg.get("clip_range")),
-        "ent_coef_start": _safe_float(cfg.get("ent_coef_start")),
-        "ent_coef_end": _safe_float(cfg.get("ent_coef_end")),
+        "env_count": safe_int(cfg.get("env_count")),
+        "n_steps": safe_int(cfg.get("n_steps")),
+        "batch_size": safe_int(cfg.get("batch_size")),
+        "n_epochs": safe_int(cfg.get("n_epochs")),
+        "gamma": safe_float(cfg.get("gamma")),
+        "gae_lambda": safe_float(cfg.get("gae_lambda")),
+        "learning_rate_start": safe_float(cfg.get("learning_rate_start")),
+        "learning_rate_end": safe_float(cfg.get("learning_rate_end")),
+        "clip_range": safe_float(cfg.get("clip_range")),
+        "ent_coef_start": safe_float(cfg.get("ent_coef_start")),
+        "ent_coef_end": safe_float(cfg.get("ent_coef_end")),
         "policy_net_arch": cfg.get("policy_net_arch"),
         "obs_config": obs_cfg,
         "reward_config": reward_cfg,
@@ -233,7 +209,7 @@ def _derive_checks(
             "detail": f"eval_rows={len(eval_rows)}",
         }
     )
-    vec_dim = _safe_int(vec_latest.get("obs_dim"), -1)
+    vec_dim = safe_int(vec_latest.get("obs_dim"), -1)
     checks.append(
         {
             "name": "vecnormalize_obs_dim_valid",
@@ -242,8 +218,8 @@ def _derive_checks(
         }
     )
     config = dict(metadata.get("config", {})) if isinstance(metadata.get("config"), dict) else {}
-    env_count = _safe_int(config.get("env_count"), 0)
-    n_steps = _safe_int(config.get("n_steps"), 0)
+    env_count = safe_int(config.get("env_count"), 0)
+    n_steps = safe_int(config.get("n_steps"), 0)
     checks.append(
         {
             "name": "rollout_size_defined",
@@ -251,7 +227,7 @@ def _derive_checks(
             "detail": f"env_count={env_count} n_steps={n_steps} rollout={env_count * n_steps}",
         }
     )
-    checkpoint_steps = [int(row.get("step", 0)) for row in checkpoint_vec_rows if _safe_int(row.get("step"), 0) > 0]
+    checkpoint_steps = [int(row.get("step", 0)) for row in checkpoint_vec_rows if safe_int(row.get("step"), 0) > 0]
     checks.append(
         {
             "name": "checkpoint_vecnormalize_present",
@@ -297,7 +273,7 @@ def _to_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- training row found: {bool(report.get('training_trace_row'))}")
     lines.append(f"- eval checkpoints in trace: {len(eval_rows)}")
     if eval_rows:
-        best_eval = max((_safe_float(row.get('mean_reward')) for row in eval_rows), default=0.0)
+        best_eval = max((safe_float(row.get('mean_reward')) for row in eval_rows), default=0.0)
         lines.append(f"- best eval mean_reward in run: {best_eval:.3f}")
     lines.append("")
     lines.append("## Checks")
@@ -314,36 +290,17 @@ def _write_checkpoint_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     for row in rows:
         out.append(
             "{step},{file},{obs_dim},{obs_count:.6f},{obs_mean_abs_avg:.6f},{obs_var_avg:.6f},{obs_var_max:.6f},{mtime_utc}\n".format(
-                step=_safe_int(row.get("step")),
+                step=safe_int(row.get("step")),
                 file=str(row.get("file", "")),
-                obs_dim=_safe_int(row.get("obs_dim")),
-                obs_count=_safe_float(row.get("obs_count")),
-                obs_mean_abs_avg=_safe_float(row.get("obs_mean_abs_avg")),
-                obs_var_avg=_safe_float(row.get("obs_var_avg")),
-                obs_var_max=_safe_float(row.get("obs_var_max")),
+                obs_dim=safe_int(row.get("obs_dim")),
+                obs_count=safe_float(row.get("obs_count")),
+                obs_mean_abs_avg=safe_float(row.get("obs_mean_abs_avg")),
+                obs_var_avg=safe_float(row.get("obs_var_avg")),
+                obs_var_max=safe_float(row.get("obs_var_max")),
                 mtime_utc=str(row.get("mtime_utc", "")),
             )
         )
     path.write_text("".join(out), encoding="utf-8")
-
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
 
 
 def build_report(paths: ReportPaths, run_id: str) -> dict[str, Any]:
@@ -353,9 +310,9 @@ def build_report(paths: ReportPaths, run_id: str) -> dict[str, Any]:
     vecnormalize_path = paths.artifact_dir / "vecnormalize.pkl"
     checkpoints_dir = paths.artifact_dir / "checkpoints"
 
-    metadata = _read_json(metadata_path)
-    training_rows = _read_jsonl(training_trace_path)
-    eval_rows_all = _read_jsonl(eval_trace_path)
+    metadata = read_json(metadata_path)
+    training_rows = read_jsonl(training_trace_path)
+    eval_rows_all = read_jsonl(eval_trace_path)
     train_row, eval_rows, resolved_run_id = _pick_run_rows(metadata, training_rows, eval_rows_all, run_id)
     vec_latest = _load_vecnormalize(vecnormalize_path)
     checkpoint_vec = _checkpoint_vec_rows(checkpoints_dir)
@@ -369,10 +326,10 @@ def build_report(paths: ReportPaths, run_id: str) -> dict[str, Any]:
         "vecnormalize_path": str(vecnormalize_path),
         "run": {
             "run_id": resolved_run_id,
-            "run_started_at_unix_s": _safe_float((train_row or {}).get("run_started_at_unix_s"), 0.0),
+            "run_started_at_unix_s": safe_float((train_row or {}).get("run_started_at_unix_s"), 0.0),
             "run_started_at_utc": _format_ts((train_row or {}).get("run_started_at_unix_s")),
-            "requested_total_timesteps": _safe_int((train_row or metadata).get("requested_total_timesteps")),
-            "actual_total_timesteps": _safe_int((train_row or metadata).get("actual_total_timesteps")),
+            "requested_total_timesteps": safe_int((train_row or metadata).get("requested_total_timesteps")),
+            "actual_total_timesteps": safe_int((train_row or metadata).get("actual_total_timesteps")),
         },
         "input_contract": _input_contract(metadata),
         "training_trace_row": train_row,
@@ -401,17 +358,23 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     artifact_dir = (
         (root / args.artifact_dir).resolve()
         if str(args.artifact_dir or "").strip()
-        else _resolve_default_artifact_dir(root)
+        else resolve_default_artifact_dir(root)
     )
-    paths = ReportPaths(
-        artifact_dir=artifact_dir,
-        out_dir=(root / args.out_dir).resolve(),
-    )
+    out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_TRAINING_INPUT, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
+    paths = ReportPaths(artifact_dir=artifact_dir, out_dir=out_dir)
     report = build_report(paths=paths, run_id=str(args.run_id or "").strip())
     paths.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -436,9 +399,9 @@ def main() -> None:
     json_latest.write_text(json_payload, encoding="utf-8")
     md_latest.write_text(md_payload, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
-    _prune_stamped_outputs(paths.out_dir, stem_prefix="training_input", suffix=".json", retain=int(args.retain_stamped))
-    _prune_stamped_outputs(paths.out_dir, stem_prefix="training_input", suffix=".md", retain=int(args.retain_stamped))
-    _prune_stamped_outputs(
+    prune_stamped_outputs(paths.out_dir, stem_prefix="training_input", suffix=".json", retain=int(args.retain_stamped))
+    prune_stamped_outputs(paths.out_dir, stem_prefix="training_input", suffix=".md", retain=int(args.retain_stamped))
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="training_input_checkpoint_vecnorm",
         suffix=".csv",

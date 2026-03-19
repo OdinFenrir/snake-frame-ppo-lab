@@ -51,6 +51,29 @@ Summary:
 - **Do not compare models with different observation schemas** as if they were the same experiment lineage.
 - **Do not compare a new run's results to a preserved baseline** without explicitly citing both suite artifacts.
 
+## Report Tooling Rules
+
+- Canonical report contract: `docs/REPORT_TOOLING_CONTRACT.md`.
+- Reports must write only to canonical family roots:
+  - `artifacts/training_input`
+  - `artifacts/agent_performance`
+  - `artifacts/phase3_compare`
+  - `artifacts/reports`
+- `*_latest.*` files are deterministic aliases and must be used as primary readers.
+- Retention semantics are strict:
+  - keep `latest`
+  - keep last `N` stamped (default `N=5`)
+  - never delete non-matching files
+- Compare tools must not silently default model selectors.
+
+## Legacy Policy (UTC)
+
+- Legacy write support ends: `2026-06-30 23:59 UTC`
+- Legacy read-fallback support removed: `2026-07-31 23:59 UTC`
+- After `2026-07-31 23:59 UTC`, fallback paths are hard errors with migration hints.
+
+`.bat` wrappers are compatibility-only helpers; app workflow uses Python tools directly.
+
 ## When Changing experiment_name
 
 The code now supports:

@@ -98,6 +98,22 @@ Per-step rows include:
 - risk/viability features
 - step outcome (`score_before/after`, `death_reason`, `game_over`)
 
+### Analysis Report Artifacts (Canonical)
+
+Canonical report roots:
+- `artifacts/training_input`
+- `artifacts/agent_performance`
+- `artifacts/phase3_compare`
+- `artifacts/reports`
+
+Contract guarantees:
+- deterministic latest aliases (`*_latest.*`)
+- stamped retention policy (`latest` + last `N`, default `N=5`)
+- no writes outside canonical family roots
+- compare tooling requires explicit Model 1 + Model 2 selection (no silent defaults)
+
+Authoritative contract: `docs/REPORT_TOOLING_CONTRACT.md`.
+
 ## 6. Validation and Quality Gates
 
 ### Local/CI Gates
@@ -140,3 +156,11 @@ Guardrails:
 1. Reduce controller-on underperformance on hard holdout seeds.
 2. Keep smoke and determinism gates green under strict thresholds.
 3. Preserve artifact compatibility and reproducibility while iterating.
+
+## 11. Legacy Path Timeline (UTC)
+
+- Legacy write support ends: `2026-06-30 23:59 UTC`
+- Legacy read-fallback support removed: `2026-07-31 23:59 UTC`
+- After `2026-07-31 23:59 UTC`, fallback paths are hard errors with migration hints.
+
+`.bat` wrappers remain compatibility helpers; app orchestration uses Python entrypoints directly.

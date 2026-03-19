@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-from typing import Any
+
+try:
+    from scripts.reporting.common import read_json, validate_canonical_out_dir
+    from scripts.reporting.contracts import REPORT_FAMILY_REPORTS_HUB
+except ModuleNotFoundError:
+    import sys
+
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import read_json, validate_canonical_out_dir
+    from scripts.reporting.contracts import REPORT_FAMILY_REPORTS_HUB
 
 
 def _latest_file(dir_path: Path, pattern: str) -> Path | None:
@@ -12,16 +22,6 @@ def _latest_file(dir_path: Path, pattern: str) -> Path | None:
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime)
-
-
-def _read_json(path: Path | None) -> dict[str, Any]:
-    if path is None or not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def _fmt(path: Path | None) -> str:
@@ -38,8 +38,8 @@ def _training_input_summary(training_input_dir: Path) -> list[str]:
     latest_timeline_csv = training_input_dir / "training_input_timeline_latest.csv"
     latest_dashboard = training_input_dir / "training_input_dashboard_latest.html"
 
-    report = _read_json(latest_json)
-    timeline = _read_json(latest_timeline_json)
+    report = read_json(latest_json)
+    timeline = read_json(latest_timeline_json)
 
     run = dict(report.get("run", {})) if isinstance(report.get("run"), dict) else {}
     contract = dict(report.get("input_contract", {})) if isinstance(report.get("input_contract"), dict) else {}
@@ -105,7 +105,7 @@ def _agent_performance_summary(agent_dir: Path) -> list[str]:
     latest_csv = agent_dir / "agent_performance_rows_latest.csv"
     latest_dashboard = agent_dir / "agent_performance_dashboard_latest.html"
 
-    report = _read_json(latest_json)
+    report = read_json(latest_json)
     episodes = dict(report.get("episodes", {})) if isinstance(report.get("episodes"), dict) else {}
     control = dict(report.get("agent_control", {})) if isinstance(report.get("agent_control"), dict) else {}
     checks = list(report.get("checks", [])) if isinstance(report.get("checks"), list) else []
@@ -150,7 +150,7 @@ def _model_agent_compare_summary(compare_dir: Path) -> list[str]:
     latest_md = compare_dir / "model_agent_compare_latest.md"
     latest_csv = compare_dir / "model_agent_compare_rows_latest.csv"
     latest_dashboard = compare_dir / "model_agent_compare_dashboard_latest.html"
-    report = _read_json(latest_json)
+    report = read_json(latest_json)
     compare = dict(report.get("compare", {})) if isinstance(report.get("compare"), dict) else {}
     summary = dict(report.get("summary", {})) if isinstance(report.get("summary"), dict) else {}
 
@@ -247,6 +247,10 @@ def main() -> None:
     root = Path(__file__).resolve().parents[2]
     artifacts_root = (root / args.artifacts_root).resolve()
     out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_REPORTS_HUB, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     md_path, txt_path = build_hub(artifacts_root, out_dir)
     print(f"Wrote: {md_path}")
     print(f"Wrote: {txt_path}")

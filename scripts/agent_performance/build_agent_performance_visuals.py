@@ -4,53 +4,33 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_AGENT_PERFORMANCE
+except ModuleNotFoundError:
+    import sys
 
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_AGENT_PERFORMANCE
 
 
 def _rolling_mean(values: list[float], window: int) -> list[float]:
@@ -105,12 +85,12 @@ def _build_payload(report: dict[str, Any]) -> dict[str, Any]:
     checks = list(report.get("checks", [])) if isinstance(report.get("checks"), list) else []
     rows = list(report.get("rows", [])) if isinstance(report.get("rows"), list) else []
 
-    episodes = [_safe_int(r.get("episode_index")) for r in rows]
-    scores = [_safe_int(r.get("score")) for r in rows]
-    interventions_pct = [_safe_float(r.get("interventions_pct")) for r in rows]
-    decisions_delta = [_safe_int(r.get("decisions_delta")) for r in rows]
-    interventions_delta = [_safe_int(r.get("interventions_delta")) for r in rows]
-    risk_total = [_safe_int(r.get("risk_total")) for r in rows]
+    episodes = [safe_int(r.get("episode_index")) for r in rows]
+    scores = [safe_int(r.get("score")) for r in rows]
+    interventions_pct = [safe_float(r.get("interventions_pct")) for r in rows]
+    decisions_delta = [safe_int(r.get("decisions_delta")) for r in rows]
+    interventions_delta = [safe_int(r.get("interventions_delta")) for r in rows]
+    risk_total = [safe_int(r.get("risk_total")) for r in rows]
     death_reason = [str(r.get("death_reason", "other")) for r in rows]
     mode = [str(r.get("mode", "unknown")) for r in rows]
 
@@ -137,7 +117,7 @@ def _build_payload(report: dict[str, Any]) -> dict[str, Any]:
     lo_delta_mean = (sum(lo_deltas) / float(len(lo_deltas))) if lo_deltas else 0.0
 
     risk_delta_avg = (sum(risk_delta[1:]) / float(max(1, len(risk_delta) - 1))) if risk_delta else 0.0
-    intervention_status = _status_interventions(_safe_float(ctl.get("interventions_pct_mean")))
+    intervention_status = _status_interventions(safe_float(ctl.get("interventions_pct_mean")))
     risk_status = _status_risk_drift(risk_delta_avg)
     quality_status = "HELPING" if hi_delta_mean >= lo_delta_mean else "NOISY"
 
@@ -148,21 +128,21 @@ def _build_payload(report: dict[str, Any]) -> dict[str, Any]:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_id": str(report.get("run_id", "")),
         "artifact_dir": str(report.get("artifact_dir", "")),
-        "episode_count": _safe_int(ep.get("count")),
-        "score_mean": _safe_float(ep.get("score_mean")),
-        "score_best": _safe_int(ep.get("score_best")),
-        "score_last": _safe_int(ep.get("score_last")),
+        "episode_count": safe_int(ep.get("count")),
+        "score_mean": safe_float(ep.get("score_mean")),
+        "score_best": safe_int(ep.get("score_best")),
+        "score_last": safe_int(ep.get("score_last")),
         "score_trend": str(ep.get("score_trend", "unknown")),
-        "interventions_pct_mean": _safe_float(ctl.get("interventions_pct_mean")),
-        "interventions_total": _safe_int(ctl.get("interventions_delta_total")),
-        "decisions_total": _safe_int(ctl.get("decisions_delta_total")),
-        "risk_total_last": _safe_int(ctl.get("risk_total_last")),
+        "interventions_pct_mean": safe_float(ctl.get("interventions_pct_mean")),
+        "interventions_total": safe_int(ctl.get("interventions_delta_total")),
+        "decisions_total": safe_int(ctl.get("decisions_delta_total")),
+        "risk_total_last": safe_int(ctl.get("risk_total_last")),
         "intervention_status": intervention_status,
         "risk_status": risk_status,
         "quality_status": quality_status,
-        "quality_hi_delta_mean": _safe_float(hi_delta_mean),
-        "quality_lo_delta_mean": _safe_float(lo_delta_mean),
-        "risk_delta_avg": _safe_float(risk_delta_avg),
+        "quality_hi_delta_mean": safe_float(hi_delta_mean),
+        "quality_lo_delta_mean": safe_float(lo_delta_mean),
+        "risk_delta_avg": safe_float(risk_delta_avg),
         "ok_count": ok_count,
         "fail_count": fail_count,
         "checks": checks,
@@ -371,13 +351,21 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     in_dir = (root / args.in_dir).resolve()
     out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_AGENT_PERFORMANCE, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    report = _read_json(in_dir / "agent_performance_latest.json")
+    report = read_json(in_dir / "agent_performance_latest.json")
     html = _build_html(report)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     tag = str(args.tag or "latest").strip() or "latest"
@@ -385,7 +373,7 @@ def main() -> None:
     latest = out_dir / f"agent_performance_dashboard_{tag}.html"
     stamped.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="agent_performance_dashboard",
         suffix=".html",

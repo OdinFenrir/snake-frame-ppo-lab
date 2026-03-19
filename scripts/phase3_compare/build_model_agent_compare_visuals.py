@@ -4,53 +4,33 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_PHASE3_COMPARE
+except ModuleNotFoundError:
+    import sys
 
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_PHASE3_COMPARE
 
 
 def _build_html(report: dict[str, Any]) -> str:
@@ -63,31 +43,31 @@ def _build_html(report: dict[str, Any]) -> str:
 
     left_curve = list(left.get("eval_curve", [])) if isinstance(left.get("eval_curve"), list) else []
     right_curve = list(right.get("eval_curve", [])) if isinstance(right.get("eval_curve"), list) else []
-    l_steps = [_safe_int(r.get("step")) for r in left_curve]
-    l_reward = [_safe_float(r.get("mean_reward")) for r in left_curve]
-    l_score = [_safe_float(r.get("mean_score")) for r in left_curve]
-    r_steps = [_safe_int(r.get("step")) for r in right_curve]
-    r_reward = [_safe_float(r.get("mean_reward")) for r in right_curve]
-    r_score = [_safe_float(r.get("mean_score")) for r in right_curve]
+    l_steps = [safe_int(r.get("step")) for r in left_curve]
+    l_reward = [safe_float(r.get("mean_reward")) for r in left_curve]
+    l_score = [safe_float(r.get("mean_score")) for r in left_curve]
+    r_steps = [safe_int(r.get("step")) for r in right_curve]
+    r_reward = [safe_float(r.get("mean_reward")) for r in right_curve]
+    r_score = [safe_float(r.get("mean_score")) for r in right_curve]
 
     left_deaths = dict(left.get("agent", {}).get("deaths_pct", {}))
     right_deaths = dict(right.get("agent", {}).get("deaths_pct", {}))
     death_keys = sorted(set(list(left_deaths.keys()) + list(right_deaths.keys())))
-    left_death_pct = [_safe_float(left_deaths.get(k)) for k in death_keys]
-    right_death_pct = [_safe_float(right_deaths.get(k)) for k in death_keys]
+    left_death_pct = [safe_float(left_deaths.get(k)) for k in death_keys]
+    right_death_pct = [safe_float(right_deaths.get(k)) for k in death_keys]
 
     metrics = [str(m.get("metric", "")) for m in metric_rows]
-    left_vals = [_safe_float(m.get("left_value")) for m in metric_rows]
-    right_vals = [_safe_float(m.get("right_value")) for m in metric_rows]
-    deltas = [_safe_float(m.get("delta_right_minus_left")) for m in metric_rows]
+    left_vals = [safe_float(m.get("left_value")) for m in metric_rows]
+    right_vals = [safe_float(m.get("right_value")) for m in metric_rows]
+    deltas = [safe_float(m.get("delta_right_minus_left")) for m in metric_rows]
     delta_colors = ["#63d18d" if v >= 0 else "#f38b8b" for v in deltas]
 
     left_art = dict(left.get("artifacts", {}))
     right_art = dict(right.get("artifacts", {}))
     art_keys = ["last_model_bytes", "vecnormalize_bytes", "arbiter_bytes", "tactic_memory_bytes"]
     art_labels = ["last_model", "vecnormalize", "arbiter", "tactic_memory"]
-    left_art_mb = [_safe_float(left_art.get(k)) / (1024.0 * 1024.0) for k in art_keys]
-    right_art_mb = [_safe_float(right_art.get(k)) / (1024.0 * 1024.0) for k in art_keys]
+    left_art_mb = [safe_float(left_art.get(k)) / (1024.0 * 1024.0) for k in art_keys]
+    right_art_mb = [safe_float(right_art.get(k)) / (1024.0 * 1024.0) for k in art_keys]
 
     ok_count = sum(1 for c in checks if isinstance(c, dict) and bool(c.get("ok")))
     fail_count = sum(1 for c in checks if isinstance(c, dict) and not bool(c.get("ok")))
@@ -97,9 +77,9 @@ def _build_html(report: dict[str, Any]) -> str:
         "left_exp": str(compare.get("left_experiment", "")),
         "right_exp": str(compare.get("right_experiment", "")),
         "verdict": str(compare.get("verdict", "UNKNOWN")),
-        "wins_left": _safe_int(summary.get("wins_left")),
-        "wins_right": _safe_int(summary.get("wins_right")),
-        "ties": _safe_int(summary.get("ties")),
+        "wins_left": safe_int(summary.get("wins_left")),
+        "wins_right": safe_int(summary.get("wins_right")),
+        "ties": safe_int(summary.get("ties")),
         "ok_count": ok_count,
         "fail_count": fail_count,
         "metrics": metrics,
@@ -280,13 +260,21 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     in_dir = (root / args.in_dir).resolve()
     out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_PHASE3_COMPARE, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    report = _read_json(in_dir / "model_agent_compare_latest.json")
+    report = read_json(in_dir / "model_agent_compare_latest.json")
     html = _build_html(report)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     tag = str(args.tag or "latest").strip() or "latest"
@@ -294,7 +282,7 @@ def main() -> None:
     latest = out_dir / f"model_agent_compare_dashboard_{tag}.html"
     stamped.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="model_agent_compare_dashboard",
         suffix=".html",

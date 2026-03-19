@@ -5,56 +5,42 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-_STAMP_TOKEN_RE = re.compile(r"^(?:.*_)?\d{8}_\d{6}$")
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_non_empty,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_PHASE3_COMPARE
+except ModuleNotFoundError:
+    import sys
+
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        read_jsonl,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_non_empty,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_PHASE3_COMPARE
 
 @dataclass(frozen=True)
 class ComparePaths:
     ppo_root: Path
     out_dir: Path
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(row, dict):
-            out.append(row)
-    return out
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
 
 
 def _artifact_size_bytes(path: Path) -> int:
@@ -69,25 +55,25 @@ def _artifact_size_bytes(path: Path) -> int:
 def _eval_trace(exp_dir: Path, run_id: str) -> list[dict[str, Any]]:
     if run_id:
         run_log = exp_dir / "run_logs" / f"eval_trace_{run_id}.jsonl"
-        rows = _read_jsonl(run_log)
+        rows = read_jsonl(run_log)
         if rows:
             return rows
-    return _read_jsonl(exp_dir / "eval_logs" / "evaluations_trace.jsonl")
+    return read_jsonl(exp_dir / "eval_logs" / "evaluations_trace.jsonl")
 
 
 def _death_pct(deaths: dict[str, Any], key: str) -> float:
-    total = float(sum(_safe_int(v) for v in deaths.values()))
+    total = float(sum(safe_int(v) for v in deaths.values()))
     if total <= 0.0:
         return 0.0
-    return 100.0 * float(_safe_int(deaths.get(key))) / total
+    return 100.0 * float(safe_int(deaths.get(key))) / total
 
 
 def _collect_experiment(paths: ComparePaths, exp_name: str) -> dict[str, Any]:
     exp_dir = (paths.ppo_root / exp_name).resolve()
-    meta = _read_json(exp_dir / "metadata.json")
+    meta = read_json(exp_dir / "metadata.json")
     run_id = str(meta.get("latest_run_id", "") or "")
     eval_rows = _eval_trace(exp_dir, run_id)
-    eval_rows_sorted = sorted(eval_rows, key=lambda r: _safe_int(r.get("step")))
+    eval_rows_sorted = sorted(eval_rows, key=lambda r: safe_int(r.get("step")))
 
     train_sum = dict(meta.get("training_episode_summary", {})) if isinstance(meta.get("training_episode_summary"), dict) else {}
     score_sum = dict(train_sum.get("score_summary", {})) if isinstance(train_sum.get("score_summary"), dict) else {}
@@ -100,9 +86,9 @@ def _collect_experiment(paths: ComparePaths, exp_name: str) -> dict[str, Any]:
     for row in eval_rows_sorted:
         eval_curve.append(
             {
-                "step": _safe_int(row.get("step")),
-                "mean_reward": _safe_float(row.get("mean_reward")),
-                "mean_score": _safe_float(row.get("mean_score")),
+                "step": safe_int(row.get("step")),
+                "mean_reward": safe_float(row.get("mean_reward")),
+                "mean_score": safe_float(row.get("mean_score")),
             }
         )
 
@@ -112,28 +98,28 @@ def _collect_experiment(paths: ComparePaths, exp_name: str) -> dict[str, Any]:
         "exists": exp_dir.exists(),
         "run_id": run_id,
         "model": {
-            "requested_total_timesteps": _safe_int(meta.get("requested_total_timesteps")),
-            "actual_total_timesteps": _safe_int(meta.get("actual_total_timesteps")),
-            "best_eval_reward": _safe_float(meta.get("best_eval_score")),
-            "last_eval_reward": _safe_float(meta.get("last_eval_score")),
-            "latest_eval_mean_score": _safe_float(latest_eval.get("mean_score")),
-            "best_eval_step": _safe_int(meta.get("best_eval_step")),
-            "eval_runs_completed": _safe_int(meta.get("eval_runs_completed")),
+            "requested_total_timesteps": safe_int(meta.get("requested_total_timesteps")),
+            "actual_total_timesteps": safe_int(meta.get("actual_total_timesteps")),
+            "best_eval_reward": safe_float(meta.get("best_eval_score")),
+            "last_eval_reward": safe_float(meta.get("last_eval_score")),
+            "latest_eval_mean_score": safe_float(latest_eval.get("mean_score")),
+            "best_eval_step": safe_int(meta.get("best_eval_step")),
+            "eval_runs_completed": safe_int(meta.get("eval_runs_completed")),
             "rollout": {
-                "env_count": _safe_int(cfg.get("env_count")),
-                "n_steps": _safe_int(cfg.get("n_steps")),
-                "batch_size": _safe_int(cfg.get("batch_size")),
-                "n_epochs": _safe_int(cfg.get("n_epochs")),
-                "gamma": _safe_float(cfg.get("gamma")),
+                "env_count": safe_int(cfg.get("env_count")),
+                "n_steps": safe_int(cfg.get("n_steps")),
+                "batch_size": safe_int(cfg.get("batch_size")),
+                "n_epochs": safe_int(cfg.get("n_epochs")),
+                "gamma": safe_float(cfg.get("gamma")),
             },
         },
         "agent": {
-            "episodes_total": _safe_int(train_sum.get("episodes_total")),
-            "score_mean": _safe_float(score_sum.get("mean")),
-            "score_p90": _safe_float(score_sum.get("p90")),
-            "score_best": _safe_int(score_sum.get("best")),
-            "score_last": _safe_int(score_sum.get("last")),
-            "steps_mean": _safe_float(steps_sum.get("mean")),
+            "episodes_total": safe_int(train_sum.get("episodes_total")),
+            "score_mean": safe_float(score_sum.get("mean")),
+            "score_p90": safe_float(score_sum.get("p90")),
+            "score_best": safe_int(score_sum.get("best")),
+            "score_last": safe_int(score_sum.get("last")),
+            "steps_mean": safe_float(steps_sum.get("mean")),
             "deaths": deaths,
             "deaths_pct": {
                 "body": _death_pct(deaths, "body"),
@@ -170,7 +156,7 @@ def _metric_rows(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, 
             if not isinstance(cur, dict):
                 return default
             cur = cur.get(key)
-        return _safe_float(cur, default)
+        return safe_float(cur, default)
 
     defs: list[tuple[str, tuple[str, ...], bool]] = [
         ("best_eval_reward", ("model", "best_eval_reward"), True),
@@ -186,14 +172,14 @@ def _metric_rows(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, 
     ]
     rows: list[dict[str, Any]] = []
     for name, path, higher_is_better in defs:
-        l = g(left, path)
-        r = g(right, path)
-        d, p = _delta(l, r)
+        left_value = g(left, path)
+        right_value = g(right, path)
+        d, p = _delta(left_value, right_value)
         rows.append(
             {
                 "metric": name,
-                "left_value": l,
-                "right_value": r,
+                "left_value": left_value,
+                "right_value": right_value,
                 "delta_right_minus_left": d,
                 "delta_pct_vs_left": p,
                 "higher_is_better": higher_is_better,
@@ -208,10 +194,10 @@ def _compat_checks(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str
     l_rollout = dict(left.get("model", {}).get("rollout", {}))
     r_rollout = dict(right.get("model", {}).get("rollout", {}))
     same_rollout = (
-        _safe_int(l_rollout.get("env_count")) == _safe_int(r_rollout.get("env_count"))
-        and _safe_int(l_rollout.get("n_steps")) == _safe_int(r_rollout.get("n_steps"))
-        and _safe_int(l_rollout.get("batch_size")) == _safe_int(r_rollout.get("batch_size"))
-        and _safe_int(l_rollout.get("n_epochs")) == _safe_int(r_rollout.get("n_epochs"))
+        safe_int(l_rollout.get("env_count")) == safe_int(r_rollout.get("env_count"))
+        and safe_int(l_rollout.get("n_steps")) == safe_int(r_rollout.get("n_steps"))
+        and safe_int(l_rollout.get("batch_size")) == safe_int(r_rollout.get("batch_size"))
+        and safe_int(l_rollout.get("n_epochs")) == safe_int(r_rollout.get("n_epochs"))
     )
     checks.append(
         {
@@ -255,7 +241,7 @@ def _build_report(paths: ComparePaths, left_exp: str, right_exp: str) -> dict[st
     win_left = 0
     ties = 0
     for row in metric_rows:
-        d = _safe_float(row.get("delta_right_minus_left"))
+        d = safe_float(row.get("delta_right_minus_left"))
         hib = bool(row.get("higher_is_better"))
         if abs(d) < 1e-12:
             ties += 1
@@ -317,10 +303,10 @@ def _to_markdown(report: dict[str, Any]) -> str:
         lines.append(
             "| {m} | {l:.6f} | {r:.6f} | {d:.6f} | {p:.3f}% |".format(
                 m=row.get("metric", ""),
-                l=_safe_float(row.get("left_value")),
-                r=_safe_float(row.get("right_value")),
-                d=_safe_float(row.get("delta_right_minus_left")),
-                p=_safe_float(row.get("delta_pct_vs_left")),
+                l=safe_float(row.get("left_value")),
+                r=safe_float(row.get("right_value")),
+                d=safe_float(row.get("delta_right_minus_left")),
+                p=safe_float(row.get("delta_pct_vs_left")),
             )
         )
     lines.append("")
@@ -359,33 +345,14 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         out.append(
             "{m},{l:.10f},{r:.10f},{d:.10f},{p:.10f},{hib}\n".format(
                 m=str(row.get("metric", "")),
-                l=_safe_float(row.get("left_value")),
-                r=_safe_float(row.get("right_value")),
-                d=_safe_float(row.get("delta_right_minus_left")),
-                p=_safe_float(row.get("delta_pct_vs_left")),
+                l=safe_float(row.get("left_value")),
+                r=safe_float(row.get("right_value")),
+                d=safe_float(row.get("delta_right_minus_left")),
+                p=safe_float(row.get("delta_pct_vs_left")),
                 hib="1" if bool(row.get("higher_is_better")) else "0",
             )
         )
     path.write_text("".join(out), encoding="utf-8")
-
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -397,11 +364,22 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+        validate_non_empty("--left-exp", str(args.left_exp))
+        validate_non_empty("--right-exp", str(args.right_exp))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
+    out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_PHASE3_COMPARE, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     paths = ComparePaths(
         ppo_root=(root / args.ppo_root).resolve(),
-        out_dir=(root / args.out_dir).resolve(),
+        out_dir=out_dir,
     )
     report = _build_report(paths, left_exp=str(args.left_exp).strip(), right_exp=str(args.right_exp).strip())
     paths.out_dir.mkdir(parents=True, exist_ok=True)
@@ -426,19 +404,19 @@ def main() -> None:
     json_latest.write_text(json_text, encoding="utf-8")
     md_latest.write_text(md_text, encoding="utf-8")
     csv_latest.write_text(csv_stamp.read_text(encoding="utf-8"), encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="model_agent_compare",
         suffix=".json",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="model_agent_compare",
         suffix=".md",
         retain=int(args.retain_stamped),
     )
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         paths.out_dir,
         stem_prefix="model_agent_compare_rows",
         suffix=".csv",

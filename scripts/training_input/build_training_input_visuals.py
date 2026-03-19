@@ -4,53 +4,33 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-_STAMP_TOKEN_RE = re.compile(r"^\d{8}_\d{6}$")
+try:
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
+except ModuleNotFoundError:
+    import sys
 
-
-def _prune_stamped_outputs(out_dir: Path, *, stem_prefix: str, suffix: str, retain: int) -> None:
-    keep = max(0, int(retain))
-    prefix = f"{stem_prefix}_"
-    candidates: list[Path] = []
-    for path in out_dir.glob(f"{prefix}*{suffix}"):
-        name = path.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : len(name) - len(suffix)]
-        if middle == "latest":
-            continue
-        if not _STAMP_TOKEN_RE.fullmatch(middle):
-            continue
-        candidates.append(path)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in candidates[keep:]:
-        stale.unlink(missing_ok=True)
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
+    root_dir = Path(__file__).resolve().parents[2]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from scripts.reporting.common import (
+        prune_stamped_outputs,
+        read_json,
+        safe_float,
+        safe_int,
+        validate_canonical_out_dir,
+        validate_retain_stamped,
+    )
+    from scripts.reporting.contracts import REPORT_FAMILY_TRAINING_INPUT
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -113,16 +93,16 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
     tl_rows = list(timeline.get("timeline", [])) if isinstance(timeline.get("timeline"), list) else []
     tl_summary = dict(timeline.get("summary", {})) if isinstance(timeline.get("summary"), dict) else {}
 
-    steps = [_safe_int(r.get("step")) for r in tl_rows]
+    steps = [safe_int(r.get("step")) for r in tl_rows]
     step_labels = [f"{int(s/1000)}k" if s >= 1000 else str(s) for s in steps]
-    vec_var_avg = [_safe_float(r.get("vec_obs_var_avg")) for r in tl_rows]
-    vec_var_max = [_safe_float(r.get("vec_obs_var_max")) for r in tl_rows]
-    vec_mean_abs_avg = [_safe_float(r.get("vec_obs_mean_abs_avg")) for r in tl_rows]
-    vec_obs_count = [_safe_float(r.get("vec_obs_count")) for r in tl_rows]
+    vec_var_avg = [safe_float(r.get("vec_obs_var_avg")) for r in tl_rows]
+    vec_var_max = [safe_float(r.get("vec_obs_var_max")) for r in tl_rows]
+    vec_mean_abs_avg = [safe_float(r.get("vec_obs_mean_abs_avg")) for r in tl_rows]
+    vec_obs_count = [safe_float(r.get("vec_obs_count")) for r in tl_rows]
 
     eval_points = [
         (
-            _safe_int(r.get("step")),
+            safe_int(r.get("step")),
             _float_or_none(r.get("eval_mean_reward")),
             _float_or_none(r.get("eval_mean_score")),
         )
@@ -160,16 +140,16 @@ def _build_html(report: dict[str, Any], timeline: dict[str, Any]) -> str:
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_id": str(run.get("run_id", "")),
-        "requested_total_timesteps": _safe_int(run.get("requested_total_timesteps")),
-        "actual_total_timesteps": _safe_int(run.get("actual_total_timesteps")),
-        "env_count": _safe_int(contract.get("env_count")),
-        "n_steps": _safe_int(contract.get("n_steps")),
-        "batch_size": _safe_int(contract.get("batch_size")),
-        "n_epochs": _safe_int(contract.get("n_epochs")),
-        "obs_dim": _safe_int(vec.get("obs_dim")),
-        "obs_count": _safe_float(vec.get("obs_count")),
-        "obs_mean_abs_avg": _safe_float(vec.get("obs_mean_abs_avg")),
-        "obs_var_avg": _safe_float(vec.get("obs_var_avg")),
+        "requested_total_timesteps": safe_int(run.get("requested_total_timesteps")),
+        "actual_total_timesteps": safe_int(run.get("actual_total_timesteps")),
+        "env_count": safe_int(contract.get("env_count")),
+        "n_steps": safe_int(contract.get("n_steps")),
+        "batch_size": safe_int(contract.get("batch_size")),
+        "n_epochs": safe_int(contract.get("n_epochs")),
+        "obs_dim": safe_int(vec.get("obs_dim")),
+        "obs_count": safe_float(vec.get("obs_count")),
+        "obs_mean_abs_avg": safe_float(vec.get("obs_mean_abs_avg")),
+        "obs_var_avg": safe_float(vec.get("obs_var_avg")),
         "timeline_summary": tl_summary,
         "ok_count": ok_count,
         "fail_count": fail_count,
@@ -426,14 +406,22 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
     args = parser.parse_args()
+    try:
+        validate_retain_stamped(int(args.retain_stamped))
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
 
     root = Path(__file__).resolve().parents[2]
     in_dir = (root / args.in_dir).resolve()
     out_dir = (root / args.out_dir).resolve()
+    try:
+        out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_TRAINING_INPUT, out_dir)
+    except Exception as exc:
+        raise SystemExit(f"invalid arguments: {exc}") from exc
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    report = _read_json(in_dir / "training_input_latest.json")
-    timeline = _read_json(in_dir / "training_input_timeline_latest.json")
+    report = read_json(in_dir / "training_input_latest.json")
+    timeline = read_json(in_dir / "training_input_timeline_latest.json")
     html = _build_html(report=report, timeline=timeline)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -442,7 +430,7 @@ def main() -> None:
     latest = out_dir / f"training_input_dashboard_{tag}.html"
     stamped.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
-    _prune_stamped_outputs(
+    prune_stamped_outputs(
         out_dir,
         stem_prefix="training_input_dashboard",
         suffix=".html",
