@@ -68,7 +68,7 @@ def build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             key="report_artifacts_purge",
             label="Purge Report Artifacts",
             category="Reports",
-            description="Hard-delete all report artifacts under canonical report folders",
+            description="Hard-delete report files in training_input/agent_performance/phase3_compare/reports (not live_eval/share/netron)",
             outputs=(
                 "artifacts/reports/report_artifact_cleanup_latest.md",
                 "artifacts/reports/report_artifact_cleanup_latest.json",

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from scripts.agent_performance.build_agent_performance_report import _select_rows_for_report
+from scripts.agent_performance.build_agent_performance_report import _resolve_run_log_path
 
 
 def test_select_rows_prefers_latest_run_id_when_present() -> None:
@@ -51,3 +55,29 @@ def test_select_rows_run_id_uses_latest_monotonic_segment_when_episode_index_res
     assert str(meta.get("method")) == "run_id"
     assert int(meta.get("selected_row_count", 0)) == 3
     assert int(meta.get("run_row_count_total", 0)) == 5
+
+
+def test_resolve_run_log_path_prefers_experiment_scoped_log() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        artifact_dir = root / "state" / "ppo" / "Test_1"
+        scoped_log = artifact_dir / "run_logs" / "run_session_log.jsonl"
+        scoped_log.parent.mkdir(parents=True, exist_ok=True)
+        scoped_log.write_text("", encoding="utf-8")
+        legacy_log = root / "artifacts" / "live_eval" / "run_session_log.jsonl"
+        legacy_log.parent.mkdir(parents=True, exist_ok=True)
+        legacy_log.write_text("", encoding="utf-8")
+        resolved = _resolve_run_log_path(root, artifact_dir, "", "Test_1")
+        assert resolved == scoped_log.resolve()
+
+
+def test_resolve_run_log_path_uses_legacy_when_scoped_missing() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        artifact_dir = root / "state" / "ppo" / "Test_1"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        legacy_log = root / "artifacts" / "live_eval" / "run_session_log.jsonl"
+        legacy_log.parent.mkdir(parents=True, exist_ok=True)
+        legacy_log.write_text("", encoding="utf-8")
+        resolved = _resolve_run_log_path(root, artifact_dir, "", "Test_1")
+        assert resolved == legacy_log.resolve()

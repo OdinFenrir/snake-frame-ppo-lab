@@ -132,6 +132,7 @@ def _to_markdown(payload: dict[str, Any]) -> str:
     lines.append(f"- Mode: {'APPLY' if bool(payload.get('apply')) else 'DRY-RUN'}")
     lines.append(f"- Retain stamped per prefix: {payload.get('retain_stamped')}")
     lines.append(f"- Families: {', '.join(payload.get('families', []))}")
+    lines.append("- Scope note: cleanup only affects canonical report families (not `artifacts/live_eval`, `artifacts/share`, or `artifacts/netron`).")
     lines.append(f"- Removed files total: {payload.get('removed_files_total')}")
     lines.append("")
     for row in payload.get("results", []):

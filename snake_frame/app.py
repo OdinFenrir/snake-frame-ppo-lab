@@ -126,7 +126,8 @@ class SnakeFrameApp:
             switch_experiment=self._switch_experiment,
         )
         self._bind_button_actions()
-        self._run_session_log_path = Path(__file__).resolve().parents[1] / "artifacts" / "live_eval" / "run_session_log.jsonl"
+        self._run_session_log_legacy_path = Path(__file__).resolve().parents[1] / "artifacts" / "live_eval" / "run_session_log.jsonl"
+        self._run_session_log_path = self._experiment_run_log_path(self.experiment_name)
         self._eval_suite_dir = Path(__file__).resolve().parents[1] / "artifacts" / "live_eval" / "suites"
         self._eval_suite_active = False
         self._eval_suite_phase = "idle"
@@ -608,6 +609,12 @@ class SnakeFrameApp:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, allow_nan=False) + "\n")
 
+    def _experiment_run_log_path(self, experiment_name: str | None = None) -> Path:
+        exp = str(experiment_name or getattr(self, "experiment_name", "") or "").strip()
+        if not exp:
+            exp = "baseline"
+        return Path(self.state_file).parent / "ppo" / exp / "run_logs" / "run_session_log.jsonl"
+
     def _resolve_latest_run_id_for_logging(self) -> str:
         agent = getattr(self, "agent", None)
         live_run_id = str(getattr(agent, "latest_run_id", "") or "").strip()
@@ -656,7 +663,23 @@ class SnakeFrameApp:
                 "loop_escape_activations_total": int(telemetry.loop_escape_activations_total),
             }
             try:
-                self._append_jsonl(self._run_session_log_path, payload)
+                targets: list[Path] = []
+                primary = getattr(self, "_run_session_log_path", None)
+                legacy = getattr(self, "_run_session_log_legacy_path", None)
+                if isinstance(primary, Path):
+                    targets.append(primary)
+                if isinstance(legacy, Path):
+                    targets.append(legacy)
+                unique_targets: list[Path] = []
+                seen: set[str] = set()
+                for target in targets:
+                    key = str(target.resolve())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    unique_targets.append(target)
+                for target in unique_targets:
+                    self._append_jsonl(target, payload)
             except Exception:
                 logger.exception("Failed to append run session log")
             self._runlog_prev_decisions = int(decisions_total)
@@ -694,6 +717,7 @@ class SnakeFrameApp:
             self.gameplay.set_artifact_dir(target_dir)
             self.experiment_name = name
             self._detached_mode = bool(self.experiment_name == self.DETACHED_EXPERIMENT)
+            self._run_session_log_path = self._experiment_run_log_path(self.experiment_name)
             self.app_state.model_dirty = False
             self.app_state.model_save_state = "saved" if bool(getattr(self.agent, "is_ready", False)) else "no_model"
             self.app_state.last_model_save_ok_at = 0.0

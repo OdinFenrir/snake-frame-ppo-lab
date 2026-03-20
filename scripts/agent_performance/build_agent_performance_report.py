@@ -45,6 +45,22 @@ class ReportPaths:
     out_dir: Path
 
 
+def _resolve_run_log_path(root: Path, artifact_dir: Path, run_log_arg: str, experiment: str) -> Path:
+    explicit = str(run_log_arg or "").strip()
+    if explicit:
+        return (root / explicit).resolve()
+    exp = str(experiment or artifact_dir.name).strip()
+    candidates = [
+        artifact_dir / "run_logs" / "run_session_log.jsonl",
+        root / "artifacts" / "live_eval" / exp / "run_session_log.jsonl",
+        root / "artifacts" / "live_eval" / "run_session_log.jsonl",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path.resolve()
+    return candidates[0].resolve()
+
+
 def _latest_episode_segment(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     segment: list[dict[str, Any]] = []
     segments: list[list[dict[str, Any]]] = []
@@ -286,7 +302,7 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build agent-performance report from run session telemetry.")
     parser.add_argument("--artifact-dir", type=str, default="")
-    parser.add_argument("--run-log", type=str, default="artifacts/live_eval/run_session_log.jsonl")
+    parser.add_argument("--run-log", type=str, default="")
     parser.add_argument("--out-dir", type=str, default="artifacts/agent_performance")
     parser.add_argument("--tag", type=str, default="latest")
     parser.add_argument("--retain-stamped", type=int, default=5)
@@ -307,9 +323,12 @@ def main() -> None:
         out_dir = validate_canonical_out_dir(root, REPORT_FAMILY_AGENT_PERFORMANCE, out_dir)
     except Exception as exc:
         raise SystemExit(f"invalid arguments: {exc}") from exc
+    metadata = read_json(artifact_dir / "metadata.json")
+    metadata_experiment = str(metadata.get("experiment_name", "") or metadata.get("experiment", "") or artifact_dir.name).strip()
+    run_log_path = _resolve_run_log_path(root, artifact_dir, str(args.run_log or ""), metadata_experiment)
     paths = ReportPaths(
         artifact_dir=artifact_dir,
-        run_log_path=(root / args.run_log).resolve(),
+        run_log_path=run_log_path,
         out_dir=out_dir,
     )
     report = _build_report(paths)

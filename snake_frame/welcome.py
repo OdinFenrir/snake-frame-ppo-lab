@@ -169,6 +169,8 @@ def show_welcome_window() -> WelcomeRoute | None:
     worker: threading.Thread | None = None
     worker_lock = threading.Lock()
     worker_running = False
+    manager_worker: threading.Thread | None = None
+    manager_worker_running = False
     worker_result = ""
     manager_model_idx = 0
     manager_archive_idx = 0
@@ -231,6 +233,35 @@ def show_welcome_window() -> WelcomeRoute | None:
                 status_text = f"Running: {spec.label}"
         worker = threading.Thread(target=_run, daemon=True)
         worker.start()
+
+    def _launch_manager_action(action_name: str, action_label: str, action_fn) -> bool:
+        nonlocal manager_worker, manager_worker_running, status_text
+        if manager_worker_running or worker_running:
+            status_text = "Another background action is already running."
+            return False
+        manager_worker_running = True
+        status_text = f"Running quick gate for {action_label}..."
+
+        def _run_manager() -> None:
+            nonlocal manager_worker_running, status_text
+            ok, msg = _enforce_quick_gate_for_action(action_name, cycles=3)
+            if not ok:
+                with worker_lock:
+                    status_text = msg
+                    manager_worker_running = False
+                return
+            try:
+                result = action_fn()
+                final_msg = str(getattr(result, "message", "") or f"Finished: {action_label}")
+            except Exception as exc:
+                final_msg = f"{action_label} failed: {exc}"
+            with worker_lock:
+                status_text = final_msg
+                manager_worker_running = False
+
+        manager_worker = threading.Thread(target=_run_manager, daemon=True)
+        manager_worker.start()
+        return True
 
     clock = pygame.time.Clock()
     while running:
@@ -399,6 +430,14 @@ def show_welcome_window() -> WelcomeRoute | None:
                 if screen_state == "manager" and event.button == 1:
                     if manager_back_btn.collidepoint(event.pos):
                         screen_state = "menu"
+                    if manager_worker_running and (
+                        manager_btn_promote.collidepoint(event.pos)
+                        or manager_btn_delete.collidepoint(event.pos)
+                        or manager_btn_recover_model.collidepoint(event.pos)
+                        or manager_btn_recover_workspace.collidepoint(event.pos)
+                    ):
+                        status_text = "Model Manager action already running."
+                        continue
                     for idx_row, row in enumerate(manager_model_rows):
                         if row.collidepoint(event.pos):
                             manager_model_idx = idx_row
@@ -425,18 +464,12 @@ def show_welcome_window() -> WelcomeRoute | None:
                                 manager_promote_confirm_until_s = now_s + 8.0
                                 status_text = f"Promote armed for {manager_selected_model}. Click again within 8s to confirm."
                             else:
-                                gate_ok, gate_msg = _enforce_quick_gate_for_action("promote_baseline", cycles=3)
-                                if not gate_ok:
-                                    status_text = gate_msg
-                                    manager_promote_confirm_model = ""
-                                    manager_promote_confirm_until_s = 0.0
-                                    manager_delete_confirm_model = ""
-                                    manager_delete_confirm_until_s = 0.0
-                                    manager_recover_confirm_archive = ""
-                                    manager_recover_confirm_until_s = 0.0
-                                    continue
-                                result = promote_to_baseline(root / "state", manager_selected_model)
-                                status_text = result.message
+                                selected_name = str(manager_selected_model)
+                                _launch_manager_action(
+                                    "promote_baseline",
+                                    "promote baseline",
+                                    lambda: promote_to_baseline(root / "state", selected_name),
+                                )
                                 manager_promote_confirm_model = ""
                                 manager_promote_confirm_until_s = 0.0
                                 manager_delete_confirm_model = ""
@@ -458,22 +491,23 @@ def show_welcome_window() -> WelcomeRoute | None:
                                 status_text = f"Delete armed for {manager_selected_model}. Click Delete again within 8s to confirm."
                             else:
                                 if str(manager_selected_model).strip().lower() == "baseline":
-                                    gate_ok, gate_msg = _enforce_quick_gate_for_action("delete_baseline", cycles=3)
-                                    if not gate_ok:
-                                        status_text = gate_msg
-                                        manager_delete_confirm_model = ""
-                                        manager_delete_confirm_until_s = 0.0
-                                        manager_promote_confirm_model = ""
-                                        manager_promote_confirm_until_s = 0.0
-                                        manager_recover_confirm_archive = ""
-                                        manager_recover_confirm_until_s = 0.0
-                                        continue
-                                result = delete_model(
-                                    root / "state",
-                                    manager_selected_model,
-                                    allow_delete_baseline=True,
-                                )
-                                status_text = result.message
+                                    selected_name = str(manager_selected_model)
+                                    _launch_manager_action(
+                                        "delete_baseline",
+                                        "delete baseline",
+                                        lambda: delete_model(
+                                            root / "state",
+                                            selected_name,
+                                            allow_delete_baseline=True,
+                                        ),
+                                    )
+                                else:
+                                    result = delete_model(
+                                        root / "state",
+                                        manager_selected_model,
+                                        allow_delete_baseline=True,
+                                    )
+                                    status_text = result.message
                                 manager_delete_confirm_model = ""
                                 manager_delete_confirm_until_s = 0.0
                                 manager_promote_confirm_model = ""
@@ -496,18 +530,12 @@ def show_welcome_window() -> WelcomeRoute | None:
                                 manager_recover_confirm_until_s = now_s + 8.0
                                 status_text = f"Recover model-only armed for {archive_key}. Click again within 8s to confirm."
                             else:
-                                gate_ok, gate_msg = _enforce_quick_gate_for_action("recover_baseline_model_only", cycles=3)
-                                if not gate_ok:
-                                    status_text = gate_msg
-                                    manager_recover_confirm_archive = ""
-                                    manager_recover_confirm_until_s = 0.0
-                                    manager_delete_confirm_model = ""
-                                    manager_delete_confirm_until_s = 0.0
-                                    manager_promote_confirm_model = ""
-                                    manager_promote_confirm_until_s = 0.0
-                                    continue
-                                result = recover_baseline(root / "state", manager_selected_archive, include_artifacts=False)
-                                status_text = result.message
+                                selected_archive = Path(manager_selected_archive)
+                                _launch_manager_action(
+                                    "recover_baseline_model_only",
+                                    "recover baseline (model only)",
+                                    lambda: recover_baseline(root / "state", selected_archive, include_artifacts=False),
+                                )
                                 manager_recover_confirm_archive = ""
                                 manager_recover_confirm_until_s = 0.0
                                 manager_delete_confirm_model = ""
@@ -530,18 +558,12 @@ def show_welcome_window() -> WelcomeRoute | None:
                                 manager_recover_confirm_until_s = now_s + 8.0
                                 status_text = f"Recover workspace snapshot armed for {archive_key}. Click again within 8s to confirm."
                             else:
-                                gate_ok, gate_msg = _enforce_quick_gate_for_action("recover_baseline_workspace", cycles=3)
-                                if not gate_ok:
-                                    status_text = gate_msg
-                                    manager_recover_confirm_archive = ""
-                                    manager_recover_confirm_until_s = 0.0
-                                    manager_delete_confirm_model = ""
-                                    manager_delete_confirm_until_s = 0.0
-                                    manager_promote_confirm_model = ""
-                                    manager_promote_confirm_until_s = 0.0
-                                    continue
-                                result = recover_baseline(root / "state", manager_selected_archive, include_artifacts=True)
-                                status_text = result.message
+                                selected_archive = Path(manager_selected_archive)
+                                _launch_manager_action(
+                                    "recover_baseline_workspace",
+                                    "recover baseline workspace",
+                                    lambda: recover_baseline(root / "state", selected_archive, include_artifacts=True),
+                                )
                                 manager_recover_confirm_archive = ""
                                 manager_recover_confirm_until_s = 0.0
                                 manager_delete_confirm_model = ""
