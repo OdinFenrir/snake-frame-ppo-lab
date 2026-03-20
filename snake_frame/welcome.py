@@ -127,7 +127,9 @@ def _open_html_in_browser(path: Path) -> None:
 
 
 def _should_auto_open_external_html(spec: ToolSpec) -> bool:
-    # Embeddable tools should stay inside the app viewer workflow.
+    # Always open report dashboards and external-viewer tools in browser.
+    if spec.key in ("training_input", "agent_performance", "phase3_compare"):
+        return True
     return not bool(spec.embeddable)
 
 
