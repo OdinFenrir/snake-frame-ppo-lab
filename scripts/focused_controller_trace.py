@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -106,6 +107,80 @@ def _seed_set_from_trace_dir(path: Path) -> set[int]:
     return out
 
 
+def _trace_meta_path(trace_dir: Path) -> Path:
+    return trace_dir / "trace_meta.json"
+
+
+def _read_trace_meta(trace_dir: Path) -> dict[str, object] | None:
+    meta_path = _trace_meta_path(trace_dir)
+    if not meta_path.exists():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _write_trace_meta(
+    trace_dir: Path,
+    *,
+    experiment: str,
+    model_selector: str,
+    max_steps: int,
+    seeds: list[int],
+    trace_tag: str,
+) -> None:
+    payload = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "experiment": str(experiment),
+        "model_selector": str(model_selector),
+        "max_steps": int(max_steps),
+        "trace_tag": str(trace_tag),
+        "seeds": sorted(int(s) for s in seeds),
+    }
+    _trace_meta_path(trace_dir).write_text(
+        json.dumps(payload, indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+
+
+def _trace_meta_matches(
+    meta: dict[str, object] | None,
+    *,
+    experiment: str,
+    model_selector: str,
+    max_steps: int,
+    trace_tag: str,
+    required_seeds: set[int],
+) -> bool:
+    if not isinstance(meta, dict):
+        return False
+    if str(meta.get("experiment", "")) != str(experiment):
+        return False
+    if str(meta.get("model_selector", "")) != str(model_selector):
+        return False
+    if str(meta.get("trace_tag", "")) != str(trace_tag):
+        return False
+    try:
+        meta_max_steps = int(meta.get("max_steps", -1))
+    except Exception:
+        return False
+    # Reuse only when existing traces were generated with at least the requested step cap.
+    if meta_max_steps < int(max_steps):
+        return False
+    seeds_raw = meta.get("seeds")
+    if not isinstance(seeds_raw, list):
+        return False
+    try:
+        meta_seeds = {int(s) for s in seeds_raw}
+    except Exception:
+        return False
+    return bool(required_seeds.issubset(meta_seeds))
+
+
 def main() -> None:
     args = parse_args()
     seeds = _parse_seed_csv(str(args.seeds)) if str(args.seeds).strip() else _seeds_from_worst(Path(args.worst_json), int(args.top_n))
@@ -117,11 +192,23 @@ def main() -> None:
         trace_root = Path(args.out_dir) / "focused_traces"
         latest = _latest_trace_dir(trace_root, trace_tag=str(args.trace_tag))
         if latest is not None:
-            have = _seed_set_from_trace_dir(latest)
             need = set(int(s) for s in seeds)
-            if need.issubset(have):
-                print(f"Reusing existing focused traces: {latest}")
-                return
+            meta = _read_trace_meta(latest)
+            if _trace_meta_matches(
+                meta,
+                experiment=str(args.experiment),
+                model_selector=str(args.model_selector),
+                max_steps=int(args.max_steps),
+                trace_tag=str(args.trace_tag),
+                required_seeds=need,
+            ):
+                have = _seed_set_from_trace_dir(latest)
+                if need.issubset(have):
+                    print(f"Reusing existing focused traces: {latest}")
+                    return
+            else:
+                # Safe fallback: if metadata is missing/mismatched, force recompute.
+                pass
 
     settings = Settings()
     if bool(args.enable_risk_switch_guard) or bool(args.risk_guard_allow_narrow_corridor):
@@ -189,6 +276,17 @@ def main() -> None:
         if not latest:
             raise SystemExit("Holdout trace finished without writing latest summary.")
         print(f"latest_summary={latest}")
+        trace_root = Path(args.out_dir) / "focused_traces"
+        latest_trace = _latest_trace_dir(trace_root, trace_tag=str(args.trace_tag))
+        if latest_trace is not None:
+            _write_trace_meta(
+                latest_trace,
+                experiment=str(args.experiment),
+                model_selector=str(args.model_selector),
+                max_steps=int(args.max_steps),
+                seeds=[int(s) for s in seeds],
+                trace_tag=str(args.trace_tag),
+            )
     finally:
         pygame.quit()
 
