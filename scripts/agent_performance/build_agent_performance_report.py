@@ -79,12 +79,14 @@ def _select_rows_for_report(raw_rows: list[dict[str, Any]], *, run_id: str, expe
             if str(row.get("run_id", "") or "").strip() == target_run_id and safe_int(row.get("episode_index"), -1) >= 1
         ]
         if run_rows:
-            return _episode_rows(run_rows), {
+            latest_run_segment = _latest_episode_segment(run_rows)
+            return _episode_rows(latest_run_segment), {
                 "method": "run_id",
                 "selected_run_id": target_run_id,
                 "selected_experiment": target_experiment,
                 "raw_row_count": len(raw_rows),
-                "selected_row_count": len(run_rows),
+                "selected_row_count": len(latest_run_segment),
+                "run_row_count_total": len(run_rows),
             }
         if rows_with_any_run_id:
             return [], {

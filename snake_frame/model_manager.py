@@ -93,6 +93,7 @@ def promote_to_baseline(state_root: Path, source_model: str) -> ModelManagerResu
         if baseline_dir.exists():
             shutil.rmtree(baseline_dir)
         source_dir.replace(baseline_dir)
+        _normalize_baseline_metadata(baseline_dir)
         # New baseline should start with fresh derived reports/visuals.
         _clear_managed_artifacts(state_root)
     except OSError as exc:
@@ -182,6 +183,7 @@ def recover_baseline(state_root: Path, archive_zip: Path, *, include_artifacts: 
         if baseline_dir.exists():
             shutil.rmtree(baseline_dir)
         temp_baseline.replace(baseline_dir)
+        _normalize_baseline_metadata(baseline_dir)
         if include_artifacts:
             _clear_managed_artifacts(state_root)
             for sub in _MANAGED_ARTIFACT_SUBDIRS:
@@ -345,3 +347,19 @@ def _safe_extract_target(base: Path, rel: str) -> Path:
     if candidate == base_resolved or base_resolved not in candidate.parents:
         raise ValueError(f"archive entry escapes target root: {rel_norm}")
     return candidate
+
+
+def _normalize_baseline_metadata(baseline_dir: Path) -> None:
+    metadata_path = baseline_dir / "metadata.json"
+    if not metadata_path.exists():
+        return
+    payload: dict = {}
+    try:
+        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            payload = dict(raw)
+    except Exception:
+        payload = {}
+    payload["experiment_name"] = _BASELINE
+    payload["experiment"] = _BASELINE
+    metadata_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")

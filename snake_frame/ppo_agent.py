@@ -17,6 +17,7 @@ from pathlib import Path
 import platform
 import threading
 import statistics
+import uuid
 from typing import Callable, Iterable
 
 import numpy as np
@@ -655,8 +656,45 @@ class PpoSnakeAgent:
             payload["training_episode_summary"] = dict(training_episode_summary)
         if latest_eval_trace is not None:
             payload["latest_eval_trace"] = dict(latest_eval_trace)
-        self._metadata_path().parent.mkdir(parents=True, exist_ok=True)
-        self._metadata_path().write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
+        self._atomic_write_text(
+            self._metadata_path(),
+            json.dumps(payload, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _temp_path_for(target: Path, label: str) -> Path:
+        suffix = f".{str(label).strip() or 'tmp'}.{uuid.uuid4().hex}.tmp"
+        return target.with_name(f"{target.name}{suffix}")
+
+    @staticmethod
+    def _cleanup_temp(path: Path) -> None:
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    def _atomic_write_text(self, target: Path, content: str, *, encoding: str = "utf-8") -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = self._temp_path_for(target, "meta")
+        try:
+            with temp.open("w", encoding=encoding) as handle:
+                handle.write(str(content))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(str(temp), str(target))
+        finally:
+            self._cleanup_temp(temp)
+
+    def _atomic_save_via_callback(self, target: Path, *, label: str, save_fn: Callable[[Path], None]) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = self._temp_path_for(target, label)
+        try:
+            save_fn(temp)
+            os.replace(str(temp), str(target))
+        finally:
+            self._cleanup_temp(temp)
 
     @staticmethod
     def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
@@ -822,11 +860,27 @@ class PpoSnakeAgent:
             try:
                 self.artifact_dir.mkdir(parents=True, exist_ok=True)
                 self._checkpoints_dir().mkdir(parents=True, exist_ok=True)
-                self.model.save(str(self._last_model_path()))
-                self.model.save(str(self._resume_model_path()))
+                self._atomic_save_via_callback(
+                    self._last_model_path(),
+                    label="model",
+                    save_fn=lambda p: self.model.save(str(p)),
+                )
+                self._atomic_save_via_callback(
+                    self._resume_model_path(),
+                    label="model",
+                    save_fn=lambda p: self.model.save(str(p)),
+                )
                 if self._train_vecnormalize is not None:
-                    self._train_vecnormalize.save(str(self._vecnormalize_path()))
-                    self._train_vecnormalize.save(str(self._resume_vecnormalize_path()))
+                    self._atomic_save_via_callback(
+                        self._vecnormalize_path(),
+                        label="vec",
+                        save_fn=lambda p: self._train_vecnormalize.save(str(p)),
+                    )
+                    self._atomic_save_via_callback(
+                        self._resume_vecnormalize_path(),
+                        label="vec",
+                        save_fn=lambda p: self._train_vecnormalize.save(str(p)),
+                    )
                     self._apply_vecnormalize_stats(self._train_vecnormalize)
                     self._resume_vecnormalize_source = self._resume_vecnormalize_path()
                 self._write_metadata(actual_steps=int(getattr(self.model, "num_timesteps", 0)))
@@ -1008,6 +1062,7 @@ class PpoSnakeAgent:
             self._vecnormalize_path(),
             self._resume_vecnormalize_path(),
             self._metadata_path(),
+            self._train_trace_path(),
             self.legacy_model_path,
         ):
             if not path.exists():
@@ -1017,9 +1072,14 @@ class PpoSnakeAgent:
                 removed_any = True
             except OSError as exc:
                 return ModelOpResult(ok=False, code=ModelOpCode.FILESYSTEM_ERROR, detail=str(exc))
-        checkpoints = self._checkpoints_dir()
-        if checkpoints.exists():
-            for child in checkpoints.glob("*"):
+        for directory in (
+            self._checkpoints_dir(),
+            self._eval_logs_dir(),
+            self._run_logs_dir(),
+        ):
+            if not directory.exists():
+                continue
+            for child in directory.glob("*"):
                 try:
                     if child.is_file():
                         child.unlink()
@@ -1027,9 +1087,14 @@ class PpoSnakeAgent:
                 except OSError as exc:
                     return ModelOpResult(ok=False, code=ModelOpCode.FILESYSTEM_ERROR, detail=str(exc))
             try:
-                checkpoints.rmdir()
+                directory.rmdir()
             except OSError:
                 pass
+        try:
+            if self.artifact_dir.exists() and self.artifact_dir.is_dir() and not any(self.artifact_dir.iterdir()):
+                self.artifact_dir.rmdir()
+        except OSError:
+            pass
         if removed_any:
             return ModelOpResult(ok=True, code=ModelOpCode.OK)
         return ModelOpResult(ok=False, code=ModelOpCode.MISSING, detail="artifacts not found")

@@ -25,7 +25,7 @@ def test_promote_to_baseline_archives_existing_baseline_and_moves_source() -> No
         test1 = state_root / "ppo" / "Test_1"
         artifacts_root = Path(tmp) / "artifacts"
         _write_file(baseline / "metadata.json", '{"name":"baseline"}')
-        _write_file(test1 / "metadata.json", '{"name":"test1"}')
+        _write_file(test1 / "metadata.json", '{"name":"test1","experiment_name":"Test_1"}')
         _write_file(artifacts_root / "training_input" / "training_input_latest.json", '{"artifact_dir":"state/ppo/baseline"}')
         _write_file(artifacts_root / "phase3_compare" / "model_agent_compare_latest.json", '{"left":"baseline","right":"test"}')
 
@@ -33,6 +33,9 @@ def test_promote_to_baseline_archives_existing_baseline_and_moves_source() -> No
 
         assert result.ok
         assert (state_root / "ppo" / "baseline" / "metadata.json").exists()
+        promoted_meta = json.loads((state_root / "ppo" / "baseline" / "metadata.json").read_text(encoding="utf-8"))
+        assert promoted_meta.get("experiment_name") == "baseline"
+        assert promoted_meta.get("experiment") == "baseline"
         assert not (state_root / "ppo" / "Test_1").exists()
         archives = list_archives(state_root)
         assert len(archives) == 1
@@ -84,6 +87,8 @@ def test_recover_baseline_restores_from_archive() -> None:
         assert recover.ok
         payload = json.loads((state_root / "ppo" / "baseline" / "metadata.json").read_text(encoding="utf-8"))
         assert payload["name"] == "old-baseline"
+        assert payload["experiment_name"] == "baseline"
+        assert payload["experiment"] == "baseline"
         # Default recover is model-only and should leave artifacts untouched.
         still_current = (artifacts_root / "training_input" / "training_input_latest.md").read_text(encoding="utf-8")
         assert still_current == "newer-report"

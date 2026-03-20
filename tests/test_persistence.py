@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,7 @@ class TestPersistence(unittest.TestCase):
             )
             agent.model = _FakeModel(num_timesteps=123)
             fake_vec = MagicMock()
+            fake_vec.save.side_effect = lambda path: Path(path).write_text("fake-vec", encoding="utf-8")
             agent._train_vecnormalize = fake_vec
 
             with patch("snake_frame.ppo_agent.PPO.load", return_value=_FakeModel(num_timesteps=123)):
@@ -100,6 +102,37 @@ class TestPersistence(unittest.TestCase):
             removed = agent.delete()
             self.assertTrue(removed)
             self.assertFalse((artifact_dir / "last_model.zip").exists())
+
+    @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
+    def test_agent_delete_cleans_trace_and_log_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
+            run_logs = artifact_dir / "run_logs"
+            eval_logs = artifact_dir / "eval_logs"
+            run_logs.mkdir(parents=True, exist_ok=True)
+            eval_logs.mkdir(parents=True, exist_ok=True)
+
+            (artifact_dir / "last_model.zip").write_text("model", encoding="utf-8")
+            (artifact_dir / "resume_model.zip").write_text("resume", encoding="utf-8")
+            (artifact_dir / "metadata.json").write_text("{}", encoding="utf-8")
+            (artifact_dir / "training_trace.jsonl").write_text('{"run_id":"r1"}\n', encoding="utf-8")
+            (eval_logs / "evaluations_trace.jsonl").write_text('{"run_id":"r1"}\n', encoding="utf-8")
+            (run_logs / "train_trace_r1.jsonl").write_text('{"run_id":"r1"}\n', encoding="utf-8")
+
+            agent = PpoSnakeAgent(
+                settings=Settings(),
+                artifact_dir=artifact_dir,
+                config=PpoConfig(env_count=1),
+                reward_config=RewardConfig(),
+                obs_config=ObsConfig(),
+                autoload=False,
+                legacy_model_path=Path(tmpdir) / "state" / "ppo_snake_model.zip",
+            )
+            removed = agent.delete()
+            self.assertTrue(removed)
+            self.assertFalse((artifact_dir / "training_trace.jsonl").exists())
+            self.assertFalse((artifact_dir / "run_logs").exists())
+            self.assertFalse((artifact_dir / "eval_logs").exists())
 
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_legacy_model_path_is_rejected(self) -> None:
@@ -237,6 +270,47 @@ class TestPersistence(unittest.TestCase):
             with patch.object(_FakeModel, "save", side_effect=OSError("disk full")):
                 saved = agent.save()
             self.assertFalse(saved)
+            leftovers = list(agent.artifact_dir.glob("*.tmp"))
+            self.assertEqual(leftovers, [])
+
+    @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
+    def test_agent_save_uses_atomic_replace_without_temp_leftovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir) / "state" / "ppo" / "baseline"
+            settings = Settings()
+            agent = PpoSnakeAgent(
+                settings=settings,
+                artifact_dir=artifact_dir,
+                config=PpoConfig(env_count=1),
+                reward_config=RewardConfig(),
+                obs_config=ObsConfig(),
+                autoload=False,
+                legacy_model_path=Path(tmpdir) / "state" / "ppo_snake_model.zip",
+            )
+            agent.model = _FakeModel(num_timesteps=55)
+            fake_vec = MagicMock()
+            fake_vec.save.side_effect = lambda path: Path(path).write_text("fake-vec", encoding="utf-8")
+            agent._train_vecnormalize = fake_vec
+
+            replace_calls: list[tuple[str, str]] = []
+            real_replace = os.replace
+
+            def _spy_replace(src: str, dst: str) -> None:
+                replace_calls.append((str(src), str(dst)))
+                real_replace(src, dst)
+
+            with (
+                patch("snake_frame.ppo_agent.os.replace", side_effect=_spy_replace),
+                patch("snake_frame.ppo_agent.PPO.load", return_value=_FakeModel(num_timesteps=55)),
+            ):
+                ok = agent.save()
+            self.assertTrue(ok)
+            self.assertGreaterEqual(len(replace_calls), 5)  # model x2 + vec x2 + metadata
+            self.assertTrue((artifact_dir / "last_model.zip").exists())
+            self.assertTrue((artifact_dir / "resume_model.zip").exists())
+            self.assertTrue((artifact_dir / "metadata.json").exists())
+            tmp_files = list(artifact_dir.glob("*.tmp"))
+            self.assertEqual(tmp_files, [])
 
     @unittest.skipIf(_AGENT_IMPORT_ERROR is not None, _SKIP_REASON)
     def test_agent_init_rejects_invalid_rollout_config(self) -> None:

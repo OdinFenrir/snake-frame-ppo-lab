@@ -329,7 +329,35 @@ class AppActions:
                     severity="warn",
                 )
                 return
-            self.set_status(f"{status}; copied to {requested_experiment}", severity="info")
+            runtime_loaded = False
+            runtime_code = "missing"
+            runtime_detail = ""
+            runtime_loader = getattr(self.agent, "load_if_exists_detailed", None)
+            if callable(runtime_loader):
+                runtime_result = runtime_loader()
+                runtime_loaded = bool(getattr(runtime_result, "ok", False))
+                runtime_code = str(getattr(runtime_result, "code", runtime_code))
+                runtime_detail = str(getattr(runtime_result, "detail", "") or "").strip()
+            else:
+                fallback_loader = getattr(self.agent, "load_if_exists", None)
+                runtime_loaded = bool(fallback_loader()) if callable(fallback_loader) else False
+                runtime_code = "ok" if runtime_loaded else "missing"
+            if runtime_loaded:
+                self.app_state.model_dirty = False
+                self.app_state.model_save_state = "saved"
+                self.app_state.last_model_save_ok_at = time.time()
+                self.set_status(
+                    f"{status}; copied to {requested_experiment} and loaded",
+                    severity="info",
+                )
+            else:
+                self.app_state.model_dirty = False
+                self.app_state.model_save_state = "no_model"
+                detail_suffix = f" ({runtime_detail})" if runtime_detail else ""
+                self.set_status(
+                    f"{status}; copied to {requested_experiment} but runtime load failed: {runtime_code}{detail_suffix}",
+                    severity="warn",
+                )
             return
         self.set_status(status, severity="info" if model_saved else "warn")
 

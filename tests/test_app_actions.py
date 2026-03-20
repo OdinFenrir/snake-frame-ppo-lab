@@ -382,6 +382,7 @@ class TestAppActions(unittest.TestCase):
             app_state = AppState()
             agent = _FakeAgent()
             agent.is_ready = True
+            agent.load_result = True
             current = {"name": "baseline"}
             switch_calls: list[str] = []
 
@@ -409,7 +410,55 @@ class TestAppActions(unittest.TestCase):
             self.assertEqual(str(target_metadata.get("experiment_name")), "test_1")
             self.assertEqual(str(target_metadata.get("artifact_dir")), str(root / "ppo" / "test_1"))
             self.assertEqual(switch_calls, ["test_1"])
-            self.assertIn("copied to test_1", app_state.status_text.lower())
+            self.assertTrue(agent.load_called)
+            self.assertIn("copied to test_1 and loaded", app_state.status_text.lower())
+
+    def test_save_to_new_experiment_warns_when_runtime_reload_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            state_file = root / "ui_state.json"
+            source_dir = root / "ppo" / "baseline"
+            source_dir.mkdir(parents=True, exist_ok=True)
+            (source_dir / "last_model.zip").write_text("model", encoding="utf-8")
+            (source_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "artifact_dir": str(source_dir),
+                        "experiment_name": "baseline",
+                        "latest_run_id": "r_source_2",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            app_state = AppState()
+            agent = _FakeAgent()
+            agent.is_ready = True
+            agent.load_result = False
+            current = {"name": "baseline"}
+            switch_calls: list[str] = []
+
+            def _switch(name: str) -> bool:
+                switch_calls.append(str(name))
+                current["name"] = str(name)
+                return True
+
+            actions = AppActions(
+                app_state=app_state,
+                game=_FakeGame(),
+                agent=agent,
+                training=_FakeTraining(),
+                generations_input=_FakeNumericInput(),
+                state_file=state_file,
+                get_experiment_name=lambda: current["name"],
+                switch_experiment=_switch,
+            )
+            actions._choose_experiment_for_save = lambda: "test_2"
+            actions.handle_save_clicked()
+
+            self.assertEqual(switch_calls, ["test_2"])
+            self.assertTrue(agent.load_called)
+            self.assertIn("runtime load failed", app_state.status_text.lower())
 
     def test_poll_completion_updates_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
