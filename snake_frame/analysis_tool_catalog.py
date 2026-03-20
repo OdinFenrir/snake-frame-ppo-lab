@@ -54,37 +54,15 @@ def build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             embeddable=True,
         ),
         ToolSpec(
-            key="report_artifacts",
-            label="Report Artifact Manager",
-            category="Reports",
-            description="Prune old stamped report files and keep latest + last N per report type",
-            outputs=(
-                "artifacts/reports/report_artifact_cleanup_latest.md",
-                "artifacts/reports/report_artifact_cleanup_latest.json",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
-            key="report_artifacts_purge",
-            label="Purge Report Artifacts",
-            category="Reports",
-            description="Hard-delete report files in training_input/agent_performance/phase3_compare/reports (not live_eval/share/netron)",
-            outputs=(
-                "artifacts/reports/report_artifact_cleanup_latest.md",
-                "artifacts/reports/report_artifact_cleanup_latest.json",
-            ),
-            embeddable=True,
-        ),
-        ToolSpec(
             key="blind_spot",
             label="Failure Replay",
             category="Diagnostics",
             description="Replay and summarize worst failure traces",
             outputs=(
-                "artifacts/live_eval/blind_spot_replay_latest.json",
                 "artifacts/live_eval/blind_spot_replay_latest.html",
+                "artifacts/live_eval/blind_spot_replay_latest.json",
             ),
-            embeddable=True,
+            embeddable=False,
         ),
         ToolSpec(
             key="postrun_suite",
@@ -112,6 +90,28 @@ def build_tools(left_exp: str, right_exp: str) -> list[ToolSpec]:
             description="Open model graph with Netron",
             outputs=(),
             embeddable=False,
+        ),
+        ToolSpec(
+            key="report_artifacts",
+            label="Report Artifact Manager",
+            category="Maintenance",
+            description="Prune old stamped report files and keep latest + last N per report type",
+            outputs=(
+                "artifacts/reports/report_artifact_cleanup_latest.md",
+                "artifacts/reports/report_artifact_cleanup_latest.json",
+            ),
+            embeddable=True,
+        ),
+        ToolSpec(
+            key="report_artifacts_purge",
+            label="Purge Report Artifacts",
+            category="Maintenance",
+            description="Hard-delete report files in training_input/agent_performance/phase3_compare/reports",
+            outputs=(
+                "artifacts/reports/report_artifact_cleanup_latest.md",
+                "artifacts/reports/report_artifact_cleanup_latest.json",
+            ),
+            embeddable=True,
         ),
     ]
 

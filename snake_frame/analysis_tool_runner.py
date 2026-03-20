@@ -7,7 +7,25 @@ import subprocess
 
 def run_commands(commands: list[tuple[str, ...]], *, root: Path, timeout_s: int = 3600) -> str:
     merged_chunks: list[str] = []
+    detach_prefix = "__DETACH__"
     for cmd in commands:
+        if len(cmd) >= 2 and str(cmd[0]) == detach_prefix:
+            detached_cmd = list(cmd[1:])
+            creationflags = 0
+            if hasattr(subprocess, "DETACHED_PROCESS"):
+                creationflags |= int(subprocess.DETACHED_PROCESS)
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creationflags |= int(subprocess.CREATE_NEW_PROCESS_GROUP)
+            subprocess.Popen(
+                detached_cmd,
+                cwd=str(root),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                creationflags=creationflags,
+            )
+            merged_chunks.append(f"$ {' '.join(detached_cmd)}\n(launched detached)")
+            continue
         proc = subprocess.run(
             list(cmd),
             cwd=str(root),

@@ -196,6 +196,21 @@ def build_blind_spot_report(
     }
 
 
+def build_empty_blind_spot_report(*, reason: str, require_death: bool, trace_files: int = 0, rows_scanned: int = 0) -> dict[str, Any]:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "trace_files": int(trace_files),
+            "rows_scanned": int(rows_scanned),
+            "blind_spot_count": 0,
+            "require_death": bool(require_death),
+            "reason": str(reason or "no_trace_data"),
+            "per_seed_blind_spot_counts": {},
+        },
+        "blind_spots": [],
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -218,6 +233,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     root = Path(args.trace_root)
+    report: dict[str, Any]
     if bool(args.latest_only):
         latest = (
             _latest_trace_dir_with_death(root)
@@ -225,21 +241,31 @@ def main() -> None:
             else _latest_trace_dir(root)
         )
         if latest is None:
-            if bool(args.require_death):
-                raise SystemExit(f"No trace directories with deaths found under: {root}")
-            raise SystemExit(f"No trace directories found under: {root}")
-        trace_files = sorted(latest.glob("seed_*.jsonl"))
+            reason = "no_trace_directories_with_deaths" if bool(args.require_death) else "no_trace_directories"
+            report = build_empty_blind_spot_report(reason=reason, require_death=bool(args.require_death))
+            trace_files: list[Path] = []
+        else:
+            trace_files = sorted(latest.glob("seed_*.jsonl"))
+            report = build_blind_spot_report(
+                trace_files=trace_files,
+                min_confidence=float(args.min_confidence),
+                max_steps_to_death=int(args.max_steps_to_death),
+                replay_window=int(args.replay_window),
+                max_spots=int(args.max_spots),
+                only_no_override=bool(args.only_no_override),
+                require_death=bool(args.require_death),
+            )
     else:
         trace_files = sorted(root.glob("**/seed_*.jsonl"))
-    report = build_blind_spot_report(
-        trace_files=trace_files,
-        min_confidence=float(args.min_confidence),
-        max_steps_to_death=int(args.max_steps_to_death),
-        replay_window=int(args.replay_window),
-        max_spots=int(args.max_spots),
-        only_no_override=bool(args.only_no_override),
-        require_death=bool(args.require_death),
-    )
+        report = build_blind_spot_report(
+            trace_files=trace_files,
+            min_confidence=float(args.min_confidence),
+            max_steps_to_death=int(args.max_steps_to_death),
+            replay_window=int(args.replay_window),
+            max_spots=int(args.max_spots),
+            only_no_override=bool(args.only_no_override),
+            require_death=bool(args.require_death),
+        )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")

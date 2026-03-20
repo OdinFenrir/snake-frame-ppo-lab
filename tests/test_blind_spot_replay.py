@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.blind_spot_replay import annotate_steps_until_death, build_blind_spot_report
+from scripts.blind_spot_replay import (
+    annotate_steps_until_death,
+    build_blind_spot_report,
+    build_empty_blind_spot_report,
+)
 
 
 class TestBlindSpotReplay(unittest.TestCase):
@@ -63,6 +67,16 @@ class TestBlindSpotReplay(unittest.TestCase):
             )
             summary = dict(report["summary"])
             self.assertEqual(int(summary["blind_spot_count"]), 0)
+
+    def test_build_empty_report_has_reason_and_zero_spots(self) -> None:
+        report = build_empty_blind_spot_report(
+            reason="no_trace_directories_with_deaths",
+            require_death=True,
+        )
+        summary = dict(report["summary"])
+        self.assertEqual(int(summary["blind_spot_count"]), 0)
+        self.assertEqual(str(summary["reason"]), "no_trace_directories_with_deaths")
+        self.assertTrue(bool(summary["require_death"]))
 
 
 if __name__ == "__main__":

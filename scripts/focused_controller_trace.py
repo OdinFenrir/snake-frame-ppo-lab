@@ -21,13 +21,16 @@ from snake_frame.settings import ObsConfig, RewardConfig, Settings, ppo_profile_
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run focused controller holdout eval with per-step traces.")
     parser.add_argument("--state-dir", type=str, default="state")
+    parser.add_argument("--experiment", type=str, default="baseline")
     parser.add_argument("--out-dir", type=str, default="artifacts/live_eval")
     parser.add_argument("--model-selector", choices=("best", "last"), default="last")
     parser.add_argument("--max-steps", type=int, default=5000)
     parser.add_argument("--seeds", type=str, default="")
     parser.add_argument("--worst-json", type=str, default="artifacts/live_eval/worst10_latest.json")
+    parser.add_argument("--latest-summary", type=str, default="artifacts/live_eval/latest_summary.json")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--trace-tag", type=str, default="worst10")
+    parser.add_argument("--reuse-latest-traces", action="store_true")
     parser.add_argument("--enable-risk-switch-guard", action="store_true")
     parser.add_argument("--risk-guard-allow-narrow-corridor", action="store_true")
     parser.add_argument("--risk-guard-narrow-min-no-progress-steps", type=int, default=16)
@@ -60,11 +63,65 @@ def _seeds_from_worst(path: Path, top_n: int) -> list[int]:
     return out
 
 
+def _seeds_from_latest_summary(path: Path, top_n: int) -> list[int]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    rows = list(payload.get("rows") or [])
+    out: list[int] = []
+    for row in rows[: max(1, int(top_n))]:
+        if not isinstance(row, dict):
+            continue
+        try:
+            out.append(int(row.get("seed")))
+        except Exception:
+            continue
+    return out
+
+
+def _latest_trace_dir(root: Path, *, trace_tag: str) -> Path | None:
+    if not root.exists():
+        return None
+    dirs = [p for p in root.iterdir() if p.is_dir()]
+    safe_tag = "".join(ch for ch in str(trace_tag) if ch.isalnum() or ch in ("-", "_")).strip("_")
+    if safe_tag:
+        suffix = f"_{safe_tag}"
+        dirs = [p for p in dirs if p.name.endswith(suffix)]
+    if not dirs:
+        return None
+    return max(dirs, key=lambda p: p.stat().st_mtime)
+
+
+def _seed_set_from_trace_dir(path: Path) -> set[int]:
+    out: set[int] = set()
+    for trace_file in sorted(path.glob("seed_*.jsonl")):
+        stem = trace_file.stem
+        try:
+            out.add(int(stem.split("_", 1)[1]))
+        except Exception:
+            continue
+    return out
+
+
 def main() -> None:
     args = parse_args()
     seeds = _parse_seed_csv(str(args.seeds)) if str(args.seeds).strip() else _seeds_from_worst(Path(args.worst_json), int(args.top_n))
     if not seeds:
+        seeds = _seeds_from_latest_summary(Path(args.latest_summary), int(args.top_n))
+    if not seeds:
         raise SystemExit("No seeds provided (use --seeds or a valid --worst-json).")
+    if bool(args.reuse_latest_traces):
+        trace_root = Path(args.out_dir) / "focused_traces"
+        latest = _latest_trace_dir(trace_root, trace_tag=str(args.trace_tag))
+        if latest is not None:
+            have = _seed_set_from_trace_dir(latest)
+            need = set(int(s) for s in seeds)
+            if need.issubset(have):
+                print(f"Reusing existing focused traces: {latest}")
+                return
 
     settings = Settings()
     if bool(args.enable_risk_switch_guard) or bool(args.risk_guard_allow_narrow_corridor):
@@ -78,7 +135,10 @@ def main() -> None:
         )
     pygame.init()
     try:
-        pygame.display.set_mode((1, 1))
+        display_flags = 0
+        if hasattr(pygame, "HIDDEN"):
+            display_flags |= int(getattr(pygame, "HIDDEN"))
+        pygame.display.set_mode((1, 1), display_flags)
         font = pygame.font.SysFont("Arial", 20, bold=True)
         small_font = pygame.font.SysFont("Arial", 16)
         runtime = build_runtime(
@@ -87,6 +147,7 @@ def main() -> None:
             small_font=small_font,
             on_score=lambda _score: None,
             state_dir=Path(args.state_dir),
+            experiment_name=str(args.experiment),
             ppo_config=ppo_profile_config("app", seed=1337),
             reward_config=RewardConfig(),
             obs_config=ObsConfig(use_extended_features=True, use_path_features=True, use_tail_path_features=True, use_free_space_features=True, use_tail_trend_features=True),
@@ -110,15 +171,23 @@ def main() -> None:
             snap = holdout.snapshot()
             raise SystemExit(f"Holdout trace did not start: {snap.last_error}")
         deadline = time.time() + 7200.0
+        completion_msg: str | None = None
         while time.time() < deadline:
             msg = holdout.poll_completion()
             if msg is not None:
-                print(msg)
+                completion_msg = str(msg)
+                print(completion_msg)
                 break
             time.sleep(0.05)
         else:
             raise SystemExit("Timed out waiting for focused controller trace completion.")
-        latest = holdout.snapshot().latest_summary_path
+        if completion_msg is None:
+            raise SystemExit("Holdout trace did not emit a completion message.")
+        if "failed" in completion_msg.lower():
+            raise SystemExit(completion_msg)
+        latest = str(holdout.snapshot().latest_summary_path or "").strip()
+        if not latest:
+            raise SystemExit("Holdout trace finished without writing latest summary.")
         print(f"latest_summary={latest}")
     finally:
         pygame.quit()

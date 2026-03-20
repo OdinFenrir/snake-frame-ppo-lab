@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -13,7 +14,7 @@ import webbrowser
 import pygame
 
 from .analysis_tool_catalog import ToolSpec, build_tools
-from .analysis_tool_commands import build_tool_commands, list_experiments, project_root
+from .analysis_tool_commands import build_tool_commands, list_experiments, project_root, python_exe
 from .analysis_tool_runner import pick_first_existing_output, read_output_preview, run_commands
 from .gate_runner import run_quick_gate_detailed
 from .model_manager import (
@@ -116,10 +117,18 @@ def _open_html_in_browser(path: Path) -> None:
     if path.suffix.lower() != ".html":
         return
     try:
-        webbrowser.open(path.resolve().as_uri())
+        if os.name == "nt" and hasattr(os, "startfile"):
+            os.startfile(str(path.resolve()))
+        else:
+            webbrowser.open(path.resolve().as_uri())
     except Exception:
         # Browser launch failure should not break in-app viewer flow.
         pass
+
+
+def _should_auto_open_external_html(spec: ToolSpec) -> bool:
+    # Embeddable tools should stay inside the app viewer workflow.
+    return not bool(spec.embeddable)
 
 
 def _copy_text_to_clipboard(text: str) -> bool:
@@ -180,6 +189,7 @@ def show_welcome_window() -> WelcomeRoute | None:
     manager_recover_confirm_until_s = 0.0
     manager_promote_confirm_model = ""
     manager_promote_confirm_until_s = 0.0
+    manager_purge_artifacts_confirm_until_s = 0.0
 
     def _launch_tool(spec: ToolSpec) -> None:
         nonlocal worker, worker_running, status_text, worker_result, viewer_text, viewer_title, screen_state, viewer_scroll
@@ -205,7 +215,7 @@ def show_welcome_window() -> WelcomeRoute | None:
             # Auto-load latest embeddable output into viewer after completion.
             output_path = pick_first_existing_output(root, spec.outputs)
             if output_path is not None:
-                if output_path.suffix.lower() == ".html":
+                if output_path.suffix.lower() == ".html" and _should_auto_open_external_html(spec):
                     with worker_lock:
                         status_text = f"Opening {spec.label} in browser (loading...)"
                     _open_html_in_browser(output_path)
@@ -227,7 +237,9 @@ def show_welcome_window() -> WelcomeRoute | None:
         with worker_lock:
             worker_running = True
             worker_result = ""
-            if spec.key in ("policy_3d", "netron"):
+            if spec.key == "blind_spot":
+                status_text = "Running: Failure Replay (rebuilding traces; can take a few minutes)"
+            elif spec.key in ("policy_3d", "netron"):
                 status_text = f"Running: {spec.label} (building/opening, may take a while)"
             else:
                 status_text = f"Running: {spec.label}"
@@ -252,7 +264,10 @@ def show_welcome_window() -> WelcomeRoute | None:
                 return
             try:
                 result = action_fn()
-                final_msg = str(getattr(result, "message", "") or f"Finished: {action_label}")
+                if isinstance(result, str):
+                    final_msg = str(result)
+                else:
+                    final_msg = str(getattr(result, "message", "") or f"Finished: {action_label}")
             except Exception as exc:
                 final_msg = f"{action_label} failed: {exc}"
             with worker_lock:
@@ -262,6 +277,30 @@ def show_welcome_window() -> WelcomeRoute | None:
         manager_worker = threading.Thread(target=_run_manager, daemon=True)
         manager_worker.start()
         return True
+
+    def _run_artifact_manager(*, purge_all: bool) -> str:
+        py = python_exe(root)
+        cmd = [
+            py,
+            "scripts/reporting/manage_report_artifacts.py",
+            "--apply",
+            "--families",
+            "training_input,agent_performance,phase3_compare,reports_hub",
+            "--out-dir",
+            "artifacts/reports",
+            "--tag",
+            "latest",
+        ]
+        if bool(purge_all):
+            cmd.append("--purge-all")
+        else:
+            cmd.extend(["--retain-stamped", "5"])
+        merged = run_commands([tuple(cmd)], root=root, timeout_s=60 * 15)
+        out = str(merged or "").strip()
+        if out:
+            lines = [ln for ln in out.splitlines() if ln.strip()]
+            return lines[-1]
+        return "Artifact manager finished."
 
     clock = pygame.time.Clock()
     while running:
@@ -279,7 +318,11 @@ def show_welcome_window() -> WelcomeRoute | None:
 
         left_exp = experiments[left_idx]
         right_exp = experiments[right_idx]
-        tools = build_tools(left_exp=left_exp, right_exp=right_exp)
+        tools = [
+            t
+            for t in build_tools(left_exp=left_exp, right_exp=right_exp)
+            if t.key not in ("report_artifacts", "report_artifacts_purge")
+        ]
         if selected_tool_idx >= len(tools):
             selected_tool_idx = max(0, len(tools) - 1)
         active_tool = tools[selected_tool_idx]
@@ -352,8 +395,19 @@ def show_welcome_window() -> WelcomeRoute | None:
                 break
 
         tools_btn_h = 34
-        tools_run_btn = pygame.Rect(tools_right_rect.x + 12, tools_right_rect.bottom - tools_btn_h - 12, 128, tools_btn_h)
-        tools_view_btn = pygame.Rect(tools_run_btn.right + 10, tools_run_btn.y, 138, tools_btn_h)
+        if active_tool.key == "blind_spot":
+            run_button_text = "Generate New Replay (Slow)"
+            view_button_text = "Open Existing Replay (Fast)"
+        else:
+            run_button_text = "Run"
+            view_button_text = "View Latest"
+        tools_btn_gap = 10
+        tools_btn_area_w = max(220, tools_right_rect.width - 24)
+        tools_btn_max_each_w = max(110, int((tools_btn_area_w - tools_btn_gap) / 2))
+        run_btn_w = min(tools_btn_max_each_w, max(128, int(action_btn_font.size(run_button_text)[0] + 26)))
+        view_btn_w = min(tools_btn_max_each_w, max(138, int(action_btn_font.size(view_button_text)[0] + 26)))
+        tools_run_btn = pygame.Rect(tools_right_rect.x + 12, tools_right_rect.bottom - tools_btn_h - 12, run_btn_w, tools_btn_h)
+        tools_view_btn = pygame.Rect(tools_run_btn.right + tools_btn_gap, tools_run_btn.y, view_btn_w, tools_btn_h)
         tools_back_btn = pygame.Rect(win_w - 108, 18, 86, 30)
         manager_back_btn = pygame.Rect(win_w - 108, 18, 86, 30)
         viewer_back_btn = pygame.Rect(win_w - 108, 20, 86, 30)
@@ -391,9 +445,35 @@ def show_welcome_window() -> WelcomeRoute | None:
         manager_btn_delete = pygame.Rect(manager_right.x + 10, manager_btn_promote.bottom + 10, manager_right.width - 20, 42)
         manager_btn_recover_model = pygame.Rect(manager_right.x + 10, manager_btn_delete.bottom + 10, manager_right.width - 20, 42)
         manager_btn_recover_workspace = pygame.Rect(manager_right.x + 10, manager_btn_recover_model.bottom + 10, manager_right.width - 20, 42)
-        archive_y = manager_btn_recover_workspace.bottom + 20
+
+        ops_end_y = manager_btn_recover_workspace.bottom
+        status_band_h = 34
+        section_gap = 12
+        artifact_title_h = item_font.get_height()
+        artifact_block_h = artifact_title_h + 8 + 42 + 8 + 42
+        artifact_section_top = manager_right.bottom - status_band_h - section_gap - artifact_block_h
+        artifact_section_top = max(ops_end_y + 56, artifact_section_top)
+
+        manager_btn_artifact_prune = pygame.Rect(
+            manager_right.x + 10,
+            artifact_section_top + artifact_title_h + 8,
+            manager_right.width - 20,
+            42,
+        )
+        manager_btn_artifact_purge = pygame.Rect(
+            manager_right.x + 10,
+            manager_btn_artifact_prune.bottom + 8,
+            manager_right.width - 20,
+            42,
+        )
+
+        archive_title_y = ops_end_y + section_gap
+        archive_y = archive_title_y + 28
+        archive_max_bottom = artifact_section_top - section_gap
         manager_archive_rows: list[pygame.Rect] = []
-        for _ in manager_archives[:6]:
+        for _ in manager_archives[:8]:
+            if archive_y + archive_row_h > archive_max_bottom:
+                break
             row = pygame.Rect(manager_right.x + 10, archive_y, manager_right.width - 20, archive_row_h)
             manager_archive_rows.append(row)
             archive_y += archive_row_h + 8
@@ -435,6 +515,8 @@ def show_welcome_window() -> WelcomeRoute | None:
                         or manager_btn_delete.collidepoint(event.pos)
                         or manager_btn_recover_model.collidepoint(event.pos)
                         or manager_btn_recover_workspace.collidepoint(event.pos)
+                        or manager_btn_artifact_prune.collidepoint(event.pos)
+                        or manager_btn_artifact_purge.collidepoint(event.pos)
                     ):
                         status_text = "Model Manager action already running."
                         continue
@@ -572,6 +654,25 @@ def show_welcome_window() -> WelcomeRoute | None:
                                 manager_promote_confirm_until_s = 0.0
                         else:
                             status_text = "No archive selected."
+                    elif manager_btn_artifact_prune.collidepoint(event.pos):
+                        manager_purge_artifacts_confirm_until_s = 0.0
+                        _launch_manager_action(
+                            "prune_report_artifacts",
+                            "prune report artifacts",
+                            lambda: _run_artifact_manager(purge_all=False),
+                        )
+                    elif manager_btn_artifact_purge.collidepoint(event.pos):
+                        now_s = float(time.monotonic())
+                        if now_s > float(manager_purge_artifacts_confirm_until_s):
+                            manager_purge_artifacts_confirm_until_s = now_s + 8.0
+                            status_text = "Purge artifacts armed. Click again within 8s to confirm."
+                        else:
+                            manager_purge_artifacts_confirm_until_s = 0.0
+                            _launch_manager_action(
+                                "purge_report_artifacts",
+                                "purge report artifacts",
+                                lambda: _run_artifact_manager(purge_all=True),
+                            )
                 if screen_state == "tools" and event.button == 1:
                     for idx_row, row in enumerate(tools_row_rects):
                         if row.collidepoint(event.pos):
@@ -585,7 +686,7 @@ def show_welcome_window() -> WelcomeRoute | None:
                         spec = tools[selected_tool_idx]
                         out_path = pick_first_existing_output(root, spec.outputs)
                         if out_path is not None:
-                            if out_path.suffix.lower() == ".html":
+                            if out_path.suffix.lower() == ".html" and _should_auto_open_external_html(spec):
                                 status_text = f"Opening {spec.label} in browser (loading...)"
                                 _open_html_in_browser(out_path)
                                 status_text = f"{spec.label} opened. Browser may still be loading large data."
@@ -692,7 +793,7 @@ def show_welcome_window() -> WelcomeRoute | None:
                         spec = tools[selected_tool_idx]
                         out_path = pick_first_existing_output(root, spec.outputs)
                         if out_path is not None:
-                            if out_path.suffix.lower() == ".html":
+                            if out_path.suffix.lower() == ".html" and _should_auto_open_external_html(spec):
                                 status_text = f"Opening {spec.label} in browser (loading...)"
                                 _open_html_in_browser(out_path)
                                 status_text = f"{spec.label} opened. Browser may still be loading large data."
@@ -830,6 +931,12 @@ def show_welcome_window() -> WelcomeRoute | None:
             emb = "Embeddable output: yes" if sel.embeddable else "Embeddable output: limited (external viewer preferred)"
             emb_surf = small_font.render(emb, True, theme.status_color)
             surface.blit(emb_surf, (right_rect.x + 12, detail_y + 74))
+            if sel.key == "blind_spot":
+                action_hint_text = "Fast opens last saved replay. Slow rebuilds replay from latest eval artifacts."
+            else:
+                action_hint_text = "Run = generate/update outputs. View Latest = open existing outputs."
+            action_hint = small_font.render(_fit_text(small_font, action_hint_text, right_rect.width - 24), True, theme.status_secondary)
+            surface.blit(action_hint, (right_rect.x + 12, detail_y + 96))
 
             try:
                 resolved_cmds = build_tool_commands(sel, left_exp=left_exp, right_exp=right_exp)
@@ -842,11 +949,11 @@ def show_welcome_window() -> WelcomeRoute | None:
             else:
                 cmd = "(no command)"
             cmd_surf = small_font.render(_fit_text(small_font, f"Command: {cmd}", right_rect.width - 24), True, theme.status_color)
-            surface.blit(cmd_surf, (right_rect.x + 12, detail_y + 98))
+            surface.blit(cmd_surf, (right_rect.x + 12, detail_y + 118))
 
             outputs_title = small_font.render("Expected outputs:", True, theme.status_color)
-            surface.blit(outputs_title, (right_rect.x + 12, detail_y + 128))
-            oy = detail_y + 150
+            surface.blit(outputs_title, (right_rect.x + 12, detail_y + 148))
+            oy = detail_y + 170
             for rel in sel.outputs:
                 p = root / rel
                 prefix = "OK " if p.exists() else ".. "
@@ -883,8 +990,14 @@ def show_welcome_window() -> WelcomeRoute | None:
                 width=2 if view_hovered else 1,
                 radius=8,
             )
-            run_lbl = action_btn_font.render("Run", True, theme.badge_text)
-            view_lbl = action_btn_font.render("View Latest", True, theme.badge_text)
+            if sel.key == "blind_spot":
+                run_text = "Generate New Replay (Slow)"
+                view_text = "Open Existing Replay (Fast)"
+            else:
+                run_text = "Run"
+                view_text = "View Latest"
+            run_lbl = action_btn_font.render(_fit_text(action_btn_font, run_text, tools_run_btn.width - 14), True, theme.badge_text)
+            view_lbl = action_btn_font.render(_fit_text(action_btn_font, view_text, tools_view_btn.width - 14), True, theme.badge_text)
             surface.blit(run_lbl, (tools_run_btn.centerx - run_lbl.get_width() // 2, tools_run_btn.y + (tools_run_btn.height - run_lbl.get_height()) // 2))
             surface.blit(view_lbl, (tools_view_btn.centerx - view_lbl.get_width() // 2, tools_view_btn.y + (tools_view_btn.height - view_lbl.get_height()) // 2))
 
@@ -929,8 +1042,10 @@ def show_welcome_window() -> WelcomeRoute | None:
             if manager_promote_confirm_model and now_s > float(manager_promote_confirm_until_s):
                 manager_promote_confirm_model = ""
                 manager_promote_confirm_until_s = 0.0
+            if manager_purge_artifacts_confirm_until_s and now_s > float(manager_purge_artifacts_confirm_until_s):
+                manager_purge_artifacts_confirm_until_s = 0.0
 
-            title = title_font.render("Model Manager", True, theme.title_color)
+            title = title_font.render("Model & Artifact Manager", True, theme.title_color)
             title_y = title_y_probe
             surface.blit(title, ((win_w - title.get_width()) // 2, title_y))
 
@@ -970,7 +1085,7 @@ def show_welcome_window() -> WelcomeRoute | None:
                     label = item_font.render(_fit_text(item_font, name, row.width - 16), True, theme.section_header)
                     surface.blit(label, (row.x + 10, row.y + (row.height - label.get_height()) // 2))
 
-            right_title = item_font.render("Baseline Snapshot Operations", True, theme.section_header)
+            right_title = item_font.render("Model + Artifact Operations", True, theme.section_header)
             surface.blit(right_title, (manager_right.x + 12, manager_right.y + 10))
 
             selected_model_text = manager_selected_model if manager_selected_model else "none"
@@ -997,6 +1112,7 @@ def show_welcome_window() -> WelcomeRoute | None:
                 and manager_promote_confirm_model == manager_selected_model
                 and now_s <= float(manager_promote_confirm_until_s)
             )
+            purge_armed = bool(manager_purge_artifacts_confirm_until_s) and now_s <= float(manager_purge_artifacts_confirm_until_s)
             delete_label = "Confirm Delete" if delete_armed else "Delete Selected Model"
             recover_model_label = "Confirm Recover Model" if recover_model_armed else "Recover Baseline (Model Only)"
             recover_workspace_label = (
@@ -1005,11 +1121,14 @@ def show_welcome_window() -> WelcomeRoute | None:
                 else "Recover Baseline (Model + Artifacts)"
             )
             promote_label = "Confirm Promote" if promote_armed else "Set Selected As Baseline"
+            artifact_purge_label = "Confirm Purge Artifacts" if purge_armed else "Purge Report Artifacts"
             action_buttons = [
                 (manager_btn_promote, promote_label, theme.toggle_positive_bg),
                 (manager_btn_delete, delete_label, theme.toggle_negative_bg),
                 (manager_btn_recover_model, recover_model_label, theme.toggle_info_bg),
                 (manager_btn_recover_workspace, recover_workspace_label, theme.toggle_info_bg),
+                (manager_btn_artifact_prune, "Prune Report Artifacts (latest + N)", theme.toggle_positive_bg),
+                (manager_btn_artifact_purge, artifact_purge_label, theme.toggle_negative_bg),
             ]
             for rect, label, tone in action_buttons:
                 hovered = rect.collidepoint(mouse_pos)
@@ -1025,10 +1144,10 @@ def show_welcome_window() -> WelcomeRoute | None:
                 surface.blit(txt, (rect.centerx - txt.get_width() // 2, rect.y + (rect.height - txt.get_height()) // 2))
 
             archive_title = item_font.render("Baseline Archives", True, theme.section_header)
-            surface.blit(archive_title, (manager_right.x + 12, manager_btn_recover_workspace.bottom + 4))
+            surface.blit(archive_title, (manager_right.x + 12, archive_title_y))
             if not manager_archives:
                 empty = small_font.render("No baseline archives available.", True, theme.status_color)
-                surface.blit(empty, (manager_right.x + 12, manager_btn_recover_workspace.bottom + 34))
+                surface.blit(empty, (manager_right.x + 12, archive_title_y + 30))
             else:
                 for idx, row in enumerate(manager_archive_rows):
                     archive_name = manager_archives[idx].name
@@ -1044,6 +1163,9 @@ def show_welcome_window() -> WelcomeRoute | None:
                     )
                     txt = small_font.render(_fit_text(small_font, archive_name, row.width - 14), True, theme.status_color)
                     surface.blit(txt, (row.x + 8, row.y + (row.height - txt.get_height()) // 2))
+
+            artifact_title = item_font.render("Artifact Cleanup", True, theme.section_header)
+            surface.blit(artifact_title, (manager_right.x + 12, artifact_section_top))
 
             status = small_font.render(_fit_text(small_font, status_text, manager_right.width - 24), True, theme.badge_text)
             surface.blit(status, (manager_right.x + 12, manager_right.bottom - 28))
