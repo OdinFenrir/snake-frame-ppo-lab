@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 import os
@@ -285,6 +286,360 @@ class _SyncEvalCallback(EvalCallback):
                     logger.exception("Eval-complete callback failed")
             return bool(keep_going)
         return bool(super()._on_step())
+
+
+@dataclass
+class _StagnationStatus:
+    is_stagnant: bool
+    slope: float
+    abs_range: float
+    mean: float
+
+
+@dataclass
+class TrainingHealthStatus:
+    healthy: bool
+    failure_reason: str
+    warnings: tuple[str, ...]
+    details: dict
+
+
+class TrainingHealthMonitor(BaseCallback):
+    """
+    Monitors PPO training health at rollout boundaries.
+    
+    FAIL (hard stop):
+    - NaN/Inf in any loss
+    - KL divergence > 0.2 for 2+ consecutive rollouts
+    - Missing metrics after warmup
+    - Explained variance < -0.5
+    
+    WARN (log but continue):
+    - KL divergence > 0.1
+    - Clip fraction > 0.85 (after warmup)
+    - Entropy decay (< 10% of recent average)
+    - Value loss spike (> 5x moving avg)
+    - Reward stagnation (flat slope + small range)
+    - Explained variance < 0
+    - Logger structure invalid
+    
+    All thresholds are configurable via constructor args.
+    Default thresholds are documented in DEFAULT_THRESHOLDS.
+    """
+    
+    DEFAULT_THRESHOLDS = {
+        "kl_fail_threshold": 0.2,
+        "kl_warn_threshold": 0.1,
+        "kl_persistence_required": 2,
+        "clip_warn_threshold": 0.85,
+        "warmup_rollouts": 3,
+        "entropy_decay_warn_threshold": 0.1,
+        "value_loss_spike_factor": 5.0,
+        "value_loss_baseline_floor": 1e-6,
+        "stagnation_window": 5,
+        "stagnation_rel_threshold": 0.01,
+        "stagnation_abs_threshold": 0.05,
+        "explained_variance_warn": 0.0,
+        "explained_variance_fail": -5.0,  # Only fail on extreme negative values
+    }
+    
+    def __init__(
+        self,
+        *,
+        on_failure: Callable[[str, dict], None] | None = None,
+        on_warning: Callable[[str, dict], None] | None = None,
+        stop_flag: Callable[[], bool] | None = None,
+        verbose: int = 0,
+        **threshold_overrides: float | int,
+    ) -> None:
+        super().__init__(verbose=verbose)
+        self.on_failure = on_failure
+        self.on_warning = on_warning
+        self.stop_flag = stop_flag
+        
+        params = {**self.DEFAULT_THRESHOLDS, **threshold_overrides}
+        
+        self.kl_fail_threshold = float(params["kl_fail_threshold"])
+        self.kl_warn_threshold = float(params["kl_warn_threshold"])
+        self.kl_persistence_required = max(1, int(params["kl_persistence_required"]))
+        self.clip_warn_threshold = float(params["clip_warn_threshold"])
+        self.warmup_rollouts = max(1, int(params["warmup_rollouts"]))
+        self.entropy_decay_warn_threshold = float(params["entropy_decay_warn_threshold"])
+        self.value_loss_spike_factor = float(params["value_loss_spike_factor"])
+        self.value_loss_baseline_floor = float(params["value_loss_baseline_floor"])
+        self.stagnation_window = max(3, int(params["stagnation_window"]))
+        self.stagnation_rel_threshold = float(params["stagnation_rel_threshold"])
+        self.stagnation_abs_threshold = float(params["stagnation_abs_threshold"])
+        self.explained_variance_warn = float(params["explained_variance_warn"])
+        self.explained_variance_fail = float(params["explained_variance_fail"])
+        
+        self._rollout_count = 0
+        self._kl_fail_count = 0
+        self._reward_history: deque[float] = deque(maxlen=self.stagnation_window + 2)
+        self._value_loss_history: deque[float] = deque(maxlen=10)
+        self._entropy_history: deque[float] = deque(maxlen=10)
+        self._logger_invalid_warned = False
+        self._name_to_value_empty_warned = False  # warn about SB3 timing artifact only once
+        self._should_stop_training = False
+        self._train_has_completed = False  # Track if train() has run at least once
+        
+    def _on_step(self) -> bool:
+        if self._should_stop_training:
+            return False
+        return True
+    
+    def _on_rollout_end(self) -> None:
+        if self.stop_flag is not None and self.stop_flag():
+            self._should_stop_training = True
+            return
+        
+        self._rollout_count += 1
+        
+        logger.debug(f"TrainingHealthMonitor: _on_rollout_end START | rollout={self._rollout_count}")
+        metrics = self._extract_rollout_metrics()
+        logger.debug(f"TrainingHealthMonitor: _on_rollout_end metrics | rollout={self._rollout_count} | has_metrics={bool(metrics)}")
+        
+        # Track if train() has completed by checking for train/* metrics.
+        # train() runs AFTER _on_rollout_end() in SB3's learn loop,
+        # so on the first rollout, train/* metrics don't exist yet.
+        has_train_metrics = any(
+            k.startswith("train/") and v is not None
+            for k, v in metrics.items()
+        )
+        if has_train_metrics:
+            self._train_has_completed = True
+        
+        ent_loss = metrics.get("train/entropy_loss")
+        if ent_loss is not None and math.isfinite(ent_loss):
+            self._entropy_history.append(abs(float(ent_loss)))
+        
+        v_loss = metrics.get("train/value_loss")
+        if v_loss is not None and math.isfinite(v_loss):
+            self._value_loss_history.append(float(v_loss))
+        
+        ep_rew = metrics.get("rollout/ep_rew_mean")
+        if ep_rew is not None and math.isfinite(ep_rew):
+            self._reward_history.append(float(ep_rew))
+        
+        status = self._check_health(metrics)
+        
+        if not status.healthy:
+            logger.error(
+                f"Training health FAILED: {status.failure_reason} | "
+                f"rollout={self._rollout_count} | details={status.details}"
+            )
+            self._should_stop_training = True
+            if self.on_failure is not None:
+                self.on_failure(status.failure_reason, status.details)
+        
+        if status.warnings:
+            for warn in status.warnings:
+                logger.warning(f"Training health WARN: {warn} | rollout={self._rollout_count}")
+                if self.on_warning is not None:
+                    self.on_warning(warn, status.details)
+
+    def _extract_rollout_metrics(self) -> dict[str, float | None]:
+        logger = self.model.logger
+        if logger is None:
+            logger.debug("TrainingHealthMonitor: logger is None")
+            return {}
+        
+        name_to_value = getattr(logger, "name_to_value", None)
+        
+        if not isinstance(name_to_value, dict):
+            if not self._logger_invalid_warned:
+                logger.warning(
+                    "TrainingHealthMonitor: logger.name_to_value is not a dict "
+                    f"- type={type(name_to_value)}, monitoring may be degraded"
+                )
+                self._logger_invalid_warned = True
+            return {}
+        
+        if not name_to_value:
+            all_keys = list(name_to_value.keys()) if name_to_value else []
+            logger.debug(
+                f"TrainingHealthMonitor: name_to_value is EMPTY | "
+                f"rollout={self._rollout_count} | "
+                f"train_has_completed={self._train_has_completed} | "
+                f"available_keys={all_keys[:10]}"
+            )
+        else:
+            train_keys = [k for k in name_to_value if k.startswith("train/")]
+            rollout_keys = [k for k in name_to_value if k.startswith("rollout/")]
+            if self._rollout_count <= 3 or self._rollout_count % 5 == 0:
+                logger.debug(
+                    f"TrainingHealthMonitor: name_to_value keys | "
+                    f"rollout={self._rollout_count} | "
+                    f"train_keys={train_keys[:5]} | rollout_keys={rollout_keys[:3]}"
+                )
+        
+        metric_keys = [
+            "train/policy_loss",
+            "train/value_loss",
+            "train/entropy_loss",
+            "train/approx_kl",
+            "train/clip_fraction",
+            "train/loss",
+            "train/explained_variance",
+            "rollout/ep_rew_mean",
+            "rollout/ep_len_mean",
+        ]
+        
+        result = {}
+        for key in metric_keys:
+            try:
+                val = name_to_value.get(key)
+                if val is not None:
+                    result[key] = float(val)
+            except Exception:
+                pass
+        
+        return result
+    
+    def _check_health(self, metrics: dict[str, float | None]) -> TrainingHealthStatus:
+        warnings: list[str] = []
+        failure_reason = ""
+        details = dict(metrics)
+        
+        # In SB3's learn() loop, _on_rollout_end() fires BEFORE train() runs.
+        # On the first rollout, train() hasn't run yet, so train/* metrics don't exist.
+        # With log_interval=1 (SB3 default), dump_logs() clears name_to_value every iteration
+        # BEFORE train() logs, so _on_rollout_end() typically sees the previous-previous
+        # iteration's metrics (or nothing if only one train() has run).
+        # The rollout/ep_* metrics ARE present (from collect_rollouts), so use those for health.
+        if not metrics:
+            if not self._train_has_completed:
+                return TrainingHealthStatus(
+                    healthy=True,
+                    failure_reason="",
+                    warnings=("No training metrics yet (train() not completed)",),
+                    details={}
+                )
+            else:
+                if not self._name_to_value_empty_warned:
+                    warnings.append("name_to_value empty (SB3 dump_logs timing - this is expected with log_interval=1)")
+                    self._name_to_value_empty_warned = True
+        
+        for key, val in metrics.items():
+            if val is None:
+                continue
+            if not math.isfinite(val):
+                failure_reason = "nan_loss"
+                details["loss_key"] = key
+                details["loss_value"] = val
+                return TrainingHealthStatus(
+                    healthy=False,
+                    failure_reason=failure_reason,
+                    warnings=(),
+                    details=details
+                )
+        
+        approx_kl = metrics.get("train/approx_kl")
+        if approx_kl is not None and math.isfinite(approx_kl):
+            kl_val = float(approx_kl)
+            if kl_val > self.kl_fail_threshold:
+                self._kl_fail_count += 1
+                if self._kl_fail_count >= self.kl_persistence_required:
+                    failure_reason = "kl_divergence_persistent"
+                    details["approx_kl"] = kl_val
+                    details["consecutive_failures"] = self._kl_fail_count
+                    return TrainingHealthStatus(
+                        healthy=False,
+                        failure_reason=failure_reason,
+                        warnings=(),
+                        details=details
+                    )
+            elif kl_val > self.kl_warn_threshold:
+                warnings.append(f"KL divergence elevated: {kl_val:.4f}")
+            else:
+                self._kl_fail_count = max(0, self._kl_fail_count - 1)
+        
+        clip_frac = metrics.get("train/clip_fraction")
+        if clip_frac is not None and math.isfinite(clip_frac):
+            cf_val = float(clip_frac)
+            if cf_val > self.clip_warn_threshold and self._rollout_count > self.warmup_rollouts:
+                warnings.append(f"Clip fraction high: {cf_val:.2%}")
+        
+        if len(self._entropy_history) >= 5:
+            current_entropy = self._entropy_history[-1]
+            recent_avg = sum(list(self._entropy_history)[-5:]) / 5
+            if recent_avg > self.value_loss_baseline_floor:
+                entropy_ratio = current_entropy / recent_avg
+                if entropy_ratio < self.entropy_decay_warn_threshold:
+                    warnings.append(
+                        f"Entropy decay: {entropy_ratio:.1%} of recent average "
+                        f"({current_entropy:.4f} vs {recent_avg:.4f})"
+                    )
+        
+        v_loss = metrics.get("train/value_loss")
+        if v_loss is not None and len(self._value_loss_history) >= 3:
+            v_val = float(v_loss)
+            moving_avg = sum(self._value_loss_history) / len(self._value_loss_history)
+            baseline = max(moving_avg, self.value_loss_baseline_floor)
+            if v_val > self.value_loss_spike_factor * baseline:
+                warnings.append(
+                    f"Value loss spike: {v_val:.2f} vs avg {moving_avg:.2f} "
+                    f"({v_val/baseline:.1f}x)"
+                )
+        
+        exp_var = metrics.get("train/explained_variance")
+        if exp_var is not None and math.isfinite(exp_var):
+            ev_val = float(exp_var)
+            # Only check explained_variance after warmup - value function takes time to learn
+            if ev_val < self.explained_variance_fail and self._rollout_count > self.warmup_rollouts:
+                failure_reason = "explained_variance_negative"
+                details["explained_variance"] = ev_val
+                return TrainingHealthStatus(
+                    healthy=False,
+                    failure_reason=failure_reason,
+                    warnings=(),
+                    details=details
+                )
+            elif ev_val < self.explained_variance_warn and self._rollout_count > self.warmup_rollouts:
+                warnings.append(f"Explained variance low: {ev_val:.3f}")
+        
+        stagnation = self._check_reward_stagnation()
+        if stagnation.is_stagnant:
+            warnings.append(
+                f"Reward stagnation: slope={stagnation.slope:.4f}, "
+                f"range={stagnation.abs_range:.2f}, "
+                f"mean={stagnation.mean:.2f}"
+            )
+        
+        return TrainingHealthStatus(
+            healthy=not bool(failure_reason),
+            failure_reason=failure_reason,
+            warnings=tuple(warnings),
+            details=details
+        )
+    
+    def _check_reward_stagnation(self) -> "_StagnationStatus":
+        """Check reward stagnation using both relative slope and absolute range."""
+        if len(self._reward_history) < self.stagnation_window:
+            return _StagnationStatus(is_stagnant=False, slope=0.0, abs_range=0.0, mean=0.0)
+        
+        recent = list(self._reward_history)[-self.stagnation_window:]
+        mean_reward = sum(recent) / len(recent)
+        
+        slope, _ = np.polyfit(range(len(recent)), recent, 1)
+        rel_slope = abs(slope) / (abs(mean_reward) + 1e-8)
+        abs_range = max(recent) - min(recent)
+        
+        is_stagnant = (
+            rel_slope < self.stagnation_rel_threshold
+            and abs_range < self.stagnation_abs_threshold * max(1.0, abs(mean_reward))
+        )
+        
+        return _StagnationStatus(
+            is_stagnant=is_stagnant,
+            slope=rel_slope,
+            abs_range=abs_range,
+            mean=mean_reward,
+        )
+    
+    @property
+    def rollout_count(self) -> int:
+        return int(self._rollout_count)
 
 
 class PpoSnakeAgent:
@@ -942,8 +1297,8 @@ class PpoSnakeAgent:
             self._vecnormalize_path() if self._vecnormalize_path().exists() else None
         )
         try:
-            selected_model = PPO.load(str(inference_path), device=self.device)
-            training_model = PPO.load(str(resume_model_path), device=self.device)
+            selected_model = PPO.load(str(inference_path), device=self.device, learning_rate=self.config.learning_rate_start)
+            training_model = PPO.load(str(resume_model_path), device=self.device, learning_rate=self.config.learning_rate_start)
         except OSError as exc:
             logger.exception("Failed to load PPO model from %s", inference_path)
             with self._model_lock:
@@ -988,8 +1343,8 @@ class PpoSnakeAgent:
             return ModelOpResult(ok=False, code=ModelOpCode.MISSING, detail="no checkpoint artifacts found")
         model_path, stats_path, step = checkpoint
         try:
-            infer_model = PPO.load(str(model_path), device=self.device)
-            train_model = PPO.load(str(model_path), device=self.device)
+            infer_model = PPO.load(str(model_path), device=self.device, learning_rate=self.config.learning_rate_start)
+            train_model = PPO.load(str(model_path), device=self.device, learning_rate=self.config.learning_rate_start)
         except OSError as exc:
             logger.exception("Failed to load checkpoint model from %s", model_path)
             return ModelOpResult(ok=False, code=ModelOpCode.FILESYSTEM_ERROR, detail=str(exc))
@@ -1248,7 +1603,49 @@ class PpoSnakeAgent:
                 start_timestep=start_timestep,
                 total_timesteps=total_steps,
             )
-            callback_chain: list[BaseCallback] = [progress_callback]
+
+            self._training_failed = False
+            self._training_failure_reason: str | None = None
+            self._training_failure_details: dict | None = None
+
+            def _on_training_health_failure(reason: str, details: dict) -> None:
+                logger.error(f"Training FAILED: {reason} | details: {details}")
+                self._training_failed = True
+                self._training_failure_reason = reason
+                self._training_failure_details = details
+                self._write_metadata(
+                    requested_steps=total_steps,
+                    actual_steps=int(self.model.num_timesteps),
+                    training_episode_summary={
+                        "status": "failed",
+                        "failure_reason": reason,
+                        "failure_details": details,
+                    },
+                )
+
+            def _on_training_health_warning(warning: str, details: dict) -> None:
+                logger.warning(f"Training WARNING: {warning}")
+
+            health_monitor = TrainingHealthMonitor(
+                on_failure=_on_training_health_failure,
+                on_warning=_on_training_health_warning,
+                stop_flag=stop_flag,
+                kl_fail_threshold=0.2,
+                kl_warn_threshold=0.1,
+                kl_persistence_required=2,
+                clip_warn_threshold=0.85,
+                warmup_rollouts=3,
+                entropy_decay_warn_threshold=0.1,
+                value_loss_spike_factor=5.0,
+                value_loss_baseline_floor=1e-6,
+                stagnation_window=5,
+                stagnation_tolerance=0.01,
+                explained_variance_warn=0.0,
+                explained_variance_fail=-5.0,  # Only fail on extreme values
+                verbose=0,
+            )
+
+            callback_chain: list[BaseCallback] = [health_monitor, progress_callback]
             if checkpoint_callback is not None:
                 callback_chain.append(checkpoint_callback)
             if eval_callback is not None:
@@ -1256,80 +1653,133 @@ class PpoSnakeAgent:
             callbacks = CallbackList(callback_chain)
             self.model.learn(total_timesteps=total_steps, callback=callbacks, reset_num_timesteps=False)
             steps_done = int(self.model.num_timesteps)
-            if eval_callback is not None:
-                run_eval_count = max(0, int(eval_callback.eval_runs_completed))
-                run_best_score = self._finite_or_none(eval_callback.best_eval_score)
-                run_best_step = max(0, int(eval_callback.best_eval_step))
-                run_last_score = self._finite_or_none(eval_callback.last_eval_score)
-                if run_eval_count > 0:
-                    if run_best_score is None:
-                        self._best_eval_score = prev_best_eval_score
-                        self._best_eval_step = prev_best_eval_step
-                    elif prev_best_eval_score is None or float(run_best_score) >= float(prev_best_eval_score):
-                        self._best_eval_score = run_best_score
-                        self._best_eval_step = run_best_step
+
+            train_trace: dict[str, object] | None = None
+            try:
+                if self._training_failed:
+                    logger.error(
+                        f"Training failed before completion - skipping save. "
+                        f"Reason: {self._training_failure_reason}"
+                    )
+                    self._write_metadata(
+                        requested_steps=total_steps,
+                        actual_steps=steps_done,
+                        training_episode_summary={
+                            "status": "failed",
+                            "failure_reason": self._training_failure_reason,
+                            "failure_details": self._training_failure_details,
+                        },
+                    )
+                    return steps_done
+
+                if eval_callback is not None:
+                    run_eval_count = max(0, int(eval_callback.eval_runs_completed))
+                    run_best_score = self._finite_or_none(eval_callback.best_eval_score)
+                    run_best_step = max(0, int(eval_callback.best_eval_step))
+                    run_last_score = self._finite_or_none(eval_callback.last_eval_score)
+                    if run_eval_count > 0:
+                        if run_best_score is None:
+                            self._best_eval_score = prev_best_eval_score
+                            self._best_eval_step = prev_best_eval_step
+                        elif prev_best_eval_score is None or float(run_best_score) >= float(prev_best_eval_score):
+                            self._best_eval_score = run_best_score
+                            self._best_eval_step = run_best_step
+                        else:
+                            self._best_eval_score = prev_best_eval_score
+                            self._best_eval_step = prev_best_eval_step
+                        self._last_eval_score = run_last_score
+                        self._eval_runs_completed = int(prev_eval_runs_completed + run_eval_count)
                     else:
                         self._best_eval_score = prev_best_eval_score
                         self._best_eval_step = prev_best_eval_step
-                    self._last_eval_score = run_last_score
-                    self._eval_runs_completed = int(prev_eval_runs_completed + run_eval_count)
+                        self._last_eval_score = prev_last_eval_score
+                        self._eval_runs_completed = prev_eval_runs_completed
                 else:
                     self._best_eval_score = prev_best_eval_score
                     self._best_eval_step = prev_best_eval_step
                     self._last_eval_score = prev_last_eval_score
                     self._eval_runs_completed = prev_eval_runs_completed
-            else:
-                self._best_eval_score = prev_best_eval_score
-                self._best_eval_step = prev_best_eval_step
-                self._last_eval_score = prev_last_eval_score
-                self._eval_runs_completed = prev_eval_runs_completed
-            save_result = self._save_last_and_stats()
-            if not save_result.ok:
-                raise RuntimeError(f"post-train save failed ({save_result.code.value}): {save_result.detail}")
-            self._ensure_best_model_artifact()
-            episodes_total = int(sum(int(v) for v in train_deaths.values()))
-            score_summary = {
-                "count": int(len(train_scores)),
-                "mean": float(statistics.fmean(train_scores)) if train_scores else 0.0,
-                "median": float(np.median(np.asarray(train_scores, dtype=np.float64))) if train_scores else 0.0,
-                "p90": float(np.percentile(np.asarray(train_scores, dtype=np.float64), 90)) if train_scores else 0.0,
-                "best": int(max(train_scores)) if train_scores else 0,
-                "last": int(train_scores[-1]) if train_scores else 0,
-            }
-            step_summary = {
-                "count": int(len(train_episode_steps)),
-                "mean": float(statistics.fmean(train_episode_steps)) if train_episode_steps else 0.0,
-                "p90": float(np.percentile(np.asarray(train_episode_steps, dtype=np.float64), 90)) if train_episode_steps else 0.0,
-                "max": int(max(train_episode_steps)) if train_episode_steps else 0,
-            }
-            train_trace = {
-                "generated_at_unix_s": float(time.time()),
-                "run_id": str(run_id),
-                "run_started_at_unix_s": float(run_started_at_unix_s),
-                "requested_total_timesteps": int(total_steps),
-                "actual_total_timesteps": int(steps_done),
-                "adaptive_reward_enabled": bool(self._adaptive_reward_enabled),
-                "episodes_total": episodes_total,
-                "deaths": dict(train_deaths),
-                "score_summary": score_summary,
-                "episode_steps_summary": step_summary,
-            }
-            try:
-                self._append_jsonl(self._train_trace_path(), train_trace)
-                self._append_jsonl(self._train_trace_run_path(run_id), train_trace)
-            except Exception:
-                logger.exception("Failed to append training trace")
-            self._write_metadata(
-                requested_steps=total_steps,
-                actual_steps=steps_done,
-                training_episode_summary=train_trace,
-                latest_eval_trace=latest_eval_trace,
-                run_id=run_id,
-                run_started_at_unix_s=run_started_at_unix_s,
-            )
-            load_result = self.load_if_exists_detailed(selector=self._inference_selector)
-            if not load_result.ok:
-                logger.warning("Post-train reload failed: %s", load_result.detail)
+                save_result = self._save_last_and_stats()
+                if not save_result.ok:
+                    raise RuntimeError(f"post-train save failed ({save_result.code.value}): {save_result.detail}")
+                self._ensure_best_model_artifact()
+                episodes_total = int(sum(int(v) for v in train_deaths.values()))
+                score_summary = {
+                    "count": int(len(train_scores)),
+                    "mean": float(statistics.fmean(train_scores)) if train_scores else 0.0,
+                    "median": float(np.median(np.asarray(train_scores, dtype=np.float64))) if train_scores else 0.0,
+                    "p90": float(np.percentile(np.asarray(train_scores, dtype=np.float64), 90)) if train_scores else 0.0,
+                    "best": int(max(train_scores)) if train_scores else 0,
+                    "last": int(train_scores[-1]) if train_scores else 0,
+                }
+                step_summary = {
+                    "count": int(len(train_episode_steps)),
+                    "mean": float(statistics.fmean(train_episode_steps)) if train_episode_steps else 0.0,
+                    "p90": float(np.percentile(np.asarray(train_episode_steps, dtype=np.float64), 90)) if train_episode_steps else 0.0,
+                    "max": int(max(train_episode_steps)) if train_episode_steps else 0,
+                }
+                train_trace = {
+                    "generated_at_unix_s": float(time.time()),
+                    "run_id": str(run_id),
+                    "run_started_at_unix_s": float(run_started_at_unix_s),
+                    "requested_total_timesteps": int(total_steps),
+                    "actual_total_timesteps": int(steps_done),
+                    "adaptive_reward_enabled": bool(self._adaptive_reward_enabled),
+                    "episodes_total": episodes_total,
+                    "deaths": dict(train_deaths),
+                    "score_summary": score_summary,
+                    "episode_steps_summary": step_summary,
+                }
+                self._write_metadata(
+                    requested_steps=total_steps,
+                    actual_steps=steps_done,
+                    training_episode_summary=train_trace,
+                    latest_eval_trace=latest_eval_trace,
+                    run_id=run_id,
+                    run_started_at_unix_s=run_started_at_unix_s,
+                )
+                load_result = self.load_if_exists_detailed(selector=self._inference_selector)
+                if not load_result.ok:
+                    logger.warning("Post-train reload failed: %s", load_result.detail)
+            finally:
+                if train_trace is None:
+                    episodes_total = int(sum(int(v) for v in train_deaths.values()))
+                    score_summary = {
+                        "count": int(len(train_scores)),
+                        "mean": float(statistics.fmean(train_scores)) if train_scores else 0.0,
+                        "median": float(np.median(np.asarray(train_scores, dtype=np.float64))) if train_scores else 0.0,
+                        "p90": float(np.percentile(np.asarray(train_scores, dtype=np.float64), 90)) if train_scores else 0.0,
+                        "best": int(max(train_scores)) if train_scores else 0,
+                        "last": int(train_scores[-1]) if train_scores else 0,
+                    }
+                    step_summary = {
+                        "count": int(len(train_episode_steps)),
+                        "mean": float(statistics.fmean(train_episode_steps)) if train_episode_steps else 0.0,
+                        "p90": float(np.percentile(np.asarray(train_episode_steps, dtype=np.float64), 90)) if train_episode_steps else 0.0,
+                        "max": int(max(train_episode_steps)) if train_episode_steps else 0,
+                    }
+                    train_trace = {
+                        "generated_at_unix_s": float(time.time()),
+                        "run_id": str(run_id),
+                        "run_started_at_unix_s": float(run_started_at_unix_s),
+                        "requested_total_timesteps": int(total_steps),
+                        "actual_total_timesteps": int(steps_done),
+                        "adaptive_reward_enabled": bool(self._adaptive_reward_enabled),
+                        "episodes_total": episodes_total,
+                        "deaths": dict(train_deaths),
+                        "score_summary": score_summary,
+                        "episode_steps_summary": step_summary,
+                    }
+                try:
+                    self._append_jsonl(self._train_trace_path(), train_trace)
+                    self._append_jsonl(self._train_trace_run_path(run_id), train_trace)
+                except Exception:
+                    logger.exception("Failed to append training trace")
+                try:
+                    if self._train_vecnormalize is not None:
+                        self._train_vecnormalize.save(str(self._vecnormalize_path()))
+                except Exception:
+                    logger.debug("vecnormalize.pkl sync skipped (may already be synced by checkpoint)")
         finally:
             if eval_env is not None:
                 eval_env.close()
@@ -1470,7 +1920,7 @@ class PpoSnakeAgent:
         if not path.exists():
             return None
         try:
-            return PPO.load(str(path), device=self.device)
+            return PPO.load(str(path), device=self.device, learning_rate=self.config.learning_rate_start)
         except Exception:
             logger.exception("Failed to load eval model from %s", path)
             return None
@@ -1622,7 +2072,7 @@ class PpoSnakeAgent:
                     snapshot_buffer = io.BytesIO()
                     self.model.save(snapshot_buffer)
                     snapshot_buffer.seek(0)
-                    self.inference_model = PPO.load(snapshot_buffer, device=self.device)
+                    self.inference_model = PPO.load(snapshot_buffer, device=self.device, learning_rate=self.config.learning_rate_start)
                     if self._train_vecnormalize is not None:
                         self._apply_vecnormalize_stats(self._train_vecnormalize)
                     sync_ok = True

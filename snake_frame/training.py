@@ -127,6 +127,8 @@ class PpoTrainingController:
         return True
 
     def stop(self) -> None:
+        import traceback
+        logger.warning("Training stop() called from:\n%s", "".join(traceback.format_stack()))
         self._stop_event.set()
 
     def poll_completion(self) -> str | None:

@@ -138,6 +138,62 @@ Authoritative contract: `docs/REPORT_TOOLING_CONTRACT.md`.
 - worst-seed extraction/enforcement: `scripts/worst_seed_gate.py`
 - focused trace capture for root-cause analysis: `scripts/focused_controller_trace.py`
 
+## 6.5 Training Safety (PPO Health Monitoring)
+
+The PPO training loop includes a custom `TrainingHealthMonitor` callback (`snake_frame/ppo_agent.py`) that runs **before all other callbacks** to detect and stop training failures early.
+
+### Purpose
+
+Prevent saving corrupted or catastrophically diverged models by detecting common PPO failure modes at rollout boundaries.
+
+### Checked Signals
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| NaN/Inf in any loss | Any | **FAIL** |
+| Persistent high KL | > 0.2 for ≥ 2 consecutive rollouts | **FAIL** |
+| Missing metrics | After train() completed + warmup | **FAIL** |
+| Explained variance | < -5.0 (after warmup) | **FAIL** |
+| KL divergence | > 0.1 | WARN |
+| Clip fraction | > 0.85 (after warmup) | WARN |
+| Entropy collapse | < 10% of recent average | WARN |
+| Value loss spike | > 5× moving average | WARN |
+| Reward stagnation | Flat slope + small range | WARN |
+| Logger structure invalid | Non-dict `name_to_value` | WARN |
+
+### Behavior on Failure
+
+1. Sets internal failure flag
+2. **Skips model checkpoint save** at end of `learn()` call
+3. Emits failure event (logged + hookable by UI)
+4. Writes `status: "failed"` to metadata
+
+### Warmup
+
+First 3 rollouts are ignored for most checks to allow initial stabilization.
+
+### SB3 Timing Note
+
+In SB3's `learn()` loop, `_on_rollout_end()` fires **before** `train()` runs. This means `train/*` metrics (policy_loss, value_loss, etc.) don't exist on the first rollout. The monitor tracks `_train_has_completed` to distinguish between "train() hasn't run yet" (expected, warn) vs "train() ran but no metrics" (failure).
+
+### Configuration
+
+All thresholds are configurable via constructor arguments:
+
+```python
+monitor = TrainingHealthMonitor(
+    kl_fail_threshold=0.2,
+    kl_persistence_required=2,
+    warmup_rollouts=3,
+    stagnation_window=5,
+    stagnation_rel_threshold=0.01,  # relative slope
+    stagnation_abs_threshold=0.05,  # absolute range
+    # ...
+)
+```
+
+Default thresholds are documented in `TrainingHealthMonitor.DEFAULT_THRESHOLDS`.
+
 ## 7. State and Schema Guarantees
 
 - UI persistence uses a versioned schema (`uiStateVersion`)

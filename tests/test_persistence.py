@@ -397,8 +397,9 @@ class TestPersistence(unittest.TestCase):
 
             load_calls: list[str] = []
 
-            def _load(path: str, device: str = "cpu"):
+            def _load(path: str, device: str = "cpu", **kwargs):
                 _ = device
+                _ = kwargs
                 load_calls.append(str(path))
                 return _Loaded()
 

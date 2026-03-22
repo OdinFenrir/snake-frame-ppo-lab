@@ -1108,6 +1108,10 @@ class GameplayController:
             and effective_proposed_viable
             and int(self._loop_escape_steps_left) <= 0
             and not bool(narrow_corridor_risk)
+            and not (
+                float(food_pressure) > conf_pressure_max
+                and int(safe_option_count) >= conf_min_safe_options
+            )
         ):
             self._dynamic.last_switch_reason = "ppo_mode_viable"
             self._last_chosen_tail_reachable = True

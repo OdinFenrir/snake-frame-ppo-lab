@@ -125,14 +125,14 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
         if dist < self.prev_food_dist:
             reward += float(self.reward_config.approach_food_reward)
         elif dist > self.prev_food_dist:
-            reward -= float(self.reward_config.retreat_food_penalty)
+            reward -= float(self.reward_config.approach_food_reward)  # symmetric shaping
         self.prev_food_dist = dist
 
         safe_options = safe_option_count(self.board_cells, self.snake, self.direction)
         if safe_options <= 1:
-            reward -= float(self.reward_config.low_safe_options_penalty)
+            reward -= float(self.reward_config.low_safe_options_penalty)  # 0.05 (was 0.07)
         elif safe_options >= 3:
-            reward += float(self.reward_config.high_safe_options_bonus)
+            reward += float(self.reward_config.high_safe_options_bonus)  # 0.03 (was 0.015)
 
         if bool(self.reward_config.use_reachable_space_penalty):
             reach_ratio = reachable_space_ratio(self.board_cells, self.snake, self.snake[0])
@@ -144,7 +144,7 @@ class SnakePPOEnv(gym.Env[np.ndarray, int]):
                 endgame_scale = 1.0 + max(0.0, length_ratio - start_ratio) * float(
                     self.reward_config.endgame_trap_penalty_scale
                 )
-                reward -= float(self.reward_config.trap_penalty) * depth * endgame_scale
+                reward -= float(self.reward_config.trap_penalty) * depth * endgame_scale  # reduced from 0.68/2.4
 
         starvation_limit = self.board_cells * self.board_cells * int(self.reward_config.board_starvation_factor)
         if self.steps_without_food > starvation_limit:

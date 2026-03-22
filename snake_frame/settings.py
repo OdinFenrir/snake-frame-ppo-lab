@@ -18,7 +18,7 @@ class PpoConfig:
     target_kl: float | None = 0.015
     ent_coef_start: float = 0.01
     ent_coef_end: float = 0.0008
-    policy_net_arch: tuple[int, ...] = (256, 256)  # Reduced for faster iteration and lower variance in short-run experiments.
+    policy_net_arch: tuple[int, ...] = (512, 512)  # Increased for NewTest3.
     policy_net_arch_pi: tuple[int, ...] | None = None
     policy_net_arch_vf: tuple[int, ...] | None = None
     seed: int | None = None
@@ -34,18 +34,18 @@ class PpoConfig:
 @dataclass(frozen=True)
 class RewardConfig:
     eat_reward: float = 30.0
-    death_penalty: float = 40.0
-    living_penalty: float = 0.01
-    approach_food_reward: float = 0.18
-    retreat_food_penalty: float = 0.08
-    starvation_penalty: float = 15.0
-    low_safe_options_penalty: float = 0.07
-    high_safe_options_bonus: float = 0.015
+    death_penalty: float = 30.0
+    living_penalty: float = 0.02
+    approach_food_reward: float = 0.05
+    retreat_food_penalty: float = 0.05
+    starvation_penalty: float = 10.0
+    low_safe_options_penalty: float = 0.05
+    high_safe_options_bonus: float = 0.03
     use_reachable_space_penalty: bool = True
     trap_penalty_threshold: float = 0.15
-    trap_penalty: float = 0.68
+    trap_penalty: float = 0.3
     endgame_length_ratio_start: float = 0.2
-    endgame_trap_penalty_scale: float = 2.4
+    endgame_trap_penalty_scale: float = 1.5
     board_starvation_factor: int = 2
     fill_board_bonus: float = 100.0
 
