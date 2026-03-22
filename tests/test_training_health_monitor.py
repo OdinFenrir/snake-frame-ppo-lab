@@ -2,20 +2,18 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch
-import math
+from unittest.mock import MagicMock
 
 
 class TestTrainingHealthMonitor(unittest.TestCase):
     def test_import(self) -> None:
         """Verify class can be imported."""
-        from snake_frame.ppo_agent import TrainingHealthMonitor, TrainingHealthStatus
+        from snake_frame.ppo_agent import TrainingHealthMonitor
         self.assertIsNotNone(TrainingHealthMonitor)
-        self.assertIsNotNone(TrainingHealthStatus)
     
     def test_nan_loss_detected(self) -> None:
         """NaN in loss should trigger failure."""
-        from snake_frame.ppo_agent import TrainingHealthMonitor, TrainingHealthStatus
+        from snake_frame.ppo_agent import TrainingHealthMonitor
         
         monitor = TrainingHealthMonitor()
         monitor.model = MagicMock()
